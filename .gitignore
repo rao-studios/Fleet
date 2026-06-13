@@ -4,6 +4,8 @@
 
 ## User settings
 xcuserdata/
+.vscode/
+.claude/
 
 ## Obj-C/Swift specific
 *.hmap
