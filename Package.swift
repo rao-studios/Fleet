@@ -9,7 +9,9 @@
 //   FleetMedia     concrete media decoders + the routing registry  (Foundation only)
 //   FleetAudio     speech-to-text transcribers                     (Apple Speech, guarded)
 //   FleetVision    image captioning over Frigate MLXVLM            (Apple only, guarded)
+//   FleetStore     fleet-db: UUID-keyed dataset + adapter storage   (Foundation only)
 //   FleetTraining  Corpus -> Frigate LoRATrain.train -> adapter    (MLX/Frigate)
+//   FleetInference adapter-aware chat (base + LoRA)                (MLX/Frigate)
 //   Fleet          umbrella that re-exports the above
 //   FleetCLI       the `fleet finetune ...` executable
 
@@ -30,7 +32,9 @@ let package = Package(
         .library(name: "Fleet", targets: ["Fleet"]),
         .library(name: "FleetCore", targets: ["FleetCore"]),
         .library(name: "FleetMedia", targets: ["FleetMedia"]),
+        .library(name: "FleetStore", targets: ["FleetStore"]),
         .library(name: "FleetTraining", targets: ["FleetTraining"]),
+        .library(name: "FleetInference", targets: ["FleetInference"]),
         .executable(name: "fleet", targets: ["FleetCLI"]),
     ],
     dependencies: [
@@ -60,6 +64,22 @@ let package = Package(
             swiftSettings: v5
         ),
         .target(
+            name: "FleetStore",
+            dependencies: ["FleetCore"],
+            swiftSettings: v5
+        ),
+        .target(
+            name: "FleetInference",
+            dependencies: [
+                "FleetCore",
+                .product(name: "MLXLLM", package: "Frigate"),
+                .product(name: "MLXLMCommon", package: "Frigate"),
+                .product(name: "MLX", package: "Frigate"),
+                .product(name: "Tokenizers", package: "Frigate"),
+            ],
+            swiftSettings: v5
+        ),
+        .target(
             name: "FleetTraining",
             dependencies: [
                 "FleetCore",
@@ -73,7 +93,10 @@ let package = Package(
         ),
         .target(
             name: "Fleet",
-            dependencies: ["FleetCore", "FleetMedia", "FleetAudio", "FleetVision", "FleetTraining"],
+            dependencies: [
+                "FleetCore", "FleetMedia", "FleetAudio", "FleetVision",
+                "FleetStore", "FleetTraining", "FleetInference",
+            ],
             swiftSettings: v5
         ),
         .executableTarget(
@@ -86,7 +109,7 @@ let package = Package(
         ),
         .testTarget(
             name: "FleetTests",
-            dependencies: ["FleetCore", "FleetMedia"],
+            dependencies: ["FleetCore", "FleetMedia", "FleetStore"],
             swiftSettings: v5
         ),
     ]

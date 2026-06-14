@@ -7,8 +7,42 @@ struct FleetCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "fleet",
         abstract: "Swift Agent Harness — coordinate folder media into an MLX LoRA fine-tune.",
-        subcommands: [Finetune.self]
+        subcommands: [Finetune.self, Chat.self]
     )
+}
+
+struct Chat: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Compare a base model vs a fine-tuned LoRA adapter on one prompt."
+    )
+
+    @Option(name: .long, help: "Base model id.")
+    var model = "mlx-community/Qwen3-0.6B-4bit"
+
+    @Option(name: .long, help: "Directory of a trained adapter (adapter_config.json + adapters.safetensors).")
+    var adapter: String
+
+    @Option(name: .long, help: "Prompt to ask both models.")
+    var prompt: String
+
+    @Option(name: .long, help: "Max tokens to generate.")
+    var maxTokens = 128
+
+    func run() async throws {
+        let history = [ChatTurn(role: .user, text: prompt)]
+        let base = ChatSession(modelId: model, adapterDirectory: nil)
+        let tuned = ChatSession(modelId: model, adapterDirectory: URL(fileURLWithPath: adapter))
+
+        print("\n── BASE MODEL ──")
+        for try await chunk in await base.reply(history: history, maxTokens: maxTokens) {
+            print(chunk, terminator: "")
+        }
+        print("\n\n── FINE-TUNED ──")
+        for try await chunk in await tuned.reply(history: history, maxTokens: maxTokens) {
+            print(chunk, terminator: "")
+        }
+        print("")
+    }
 }
 
 struct Finetune: AsyncParsableCommand {

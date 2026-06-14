@@ -29,7 +29,9 @@ public struct FleetTrainer {
     /// inside the stream's task; cancelling the stream stops training.
     public func run(corpus: Corpus) -> AsyncThrowingStream<TrainingEvent, Error> {
         AsyncThrowingStream { continuation in
-            let task = Task {
+            // Detached so the heavy synchronous training loop never runs on the
+            // caller's actor (e.g. the app's main actor).
+            let task = Task.detached(priority: .userInitiated) { [self] in
                 do {
                     try await train(corpus: corpus, continuation: continuation)
                     continuation.finish()

@@ -1,5 +1,9 @@
 # Fleet
 
+<p align="center">
+  <img src="README_Assets/1.png" alt="FleetClient — the macOS fine-tune lab" width="860">
+</p>
+
 **Swift Agent Harness.** Off-load micro fine-tuning jobs onto small on-device
 LLMs, route Totem contexts into Frigates to aggregate within Seer.
 
@@ -72,9 +76,15 @@ swift run fleet finetune --input ./mixed --output ./adapter --vision --audio
 | `FleetMedia` | concrete text/markdown/code/json/csv/pdf decoders + image/audio decoders (inference via injected closures) + the standard registry | none (Foundation) |
 | `FleetAudio` | `AudioTranscriber` protocol + Apple `SpeechTranscriber` | Apple `Speech` (guarded) |
 | `FleetVision` | `ImageCaptioner` over Frigate's `MLXVLM` | Frigate / MLX (guarded) |
+| `FleetStore` | `fleet-db`: UUID-keyed `TrainingDataset` + `TrainedAdapter` storage (ported from Totem's `FilePersistence`) | none (Foundation) |
 | `FleetTraining` | `FleetTrainer` + `FineTuningConfig` over Frigate's `LoRATrain` | Frigate / MLX |
+| `FleetInference` | `ChatSession` (base + LoRA adapter) and `ModelLoader` | Frigate / MLX |
 | `Fleet` | umbrella that re-exports all of the above | — |
-| `FleetCLI` | the `fleet finetune …` executable | swift-argument-parser |
+| `FleetCLI` | the `fleet finetune …` / `fleet chat …` executable | swift-argument-parser |
+
+A macOS app, [`Client/`](Client/) (`FleetClient`), drives the whole loop
+interactively — download a model, build a notes/Q&A dataset, fine-tune, then A/B
+chat the base vs the fine-tuned LoRA to test memory recall.
 
 `FleetCore`, `FleetMedia`, and `FleetAudio` carry no MLX/Frigate dependency, so
 they build fast and stay portable. Image/audio decoders take inference *closures*
