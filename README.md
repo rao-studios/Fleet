@@ -68,6 +68,26 @@ Enable the inference-backed decoders explicitly:
 swift run fleet finetune --input ./mixed --output ./adapter --vision --audio
 ```
 
+## The macOS app
+
+[`Client/`](Client/) (`FleetClient`) drives the whole loop interactively and is
+built to **test memory retention**: enter notes / Q&A facts, fine-tune a LoRA,
+then A/B chat the base model vs the fine-tune to see what it actually learned.
+
+**Fine-tune** — pick a dataset and base model, set LoRA rank/iterations, and watch
+the loss converge. The adapter's UUID is tied to the dataset's UUID.
+
+<p align="center">
+  <img src="README_Assets/2.png" alt="FleetClient — the fine-tune tab" width="860">
+</p>
+
+**Chat** — the same prompt answered by the base model and the fine-tuned LoRA side
+by side, with the source dataset shown for recall comparison.
+
+<p align="center">
+  <img src="README_Assets/3.png" alt="FleetClient — A/B chat comparing base vs fine-tuned recall" width="860">
+</p>
+
 ## Architecture (one package, several library targets)
 
 | Target | Role | Heavy deps |
