@@ -7,8 +7,44 @@ struct FleetCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "fleet",
         abstract: "Swift Agent Harness — coordinate folder media into an MLX LoRA fine-tune.",
-        subcommands: [Finetune.self, Chat.self]
+        subcommands: [Finetune.self, Chat.self, Ensemble.self]
     )
+}
+
+struct Ensemble: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Verify per-stage LoRA swapping on a shared model (adapter stage, then base stage)."
+    )
+
+    @Option(name: .long, help: "Base model id.")
+    var model = "mlx-community/Qwen3-0.6B-4bit"
+
+    @Option(name: .long, help: "Adapter directory to apply in stage 1.")
+    var adapter: String
+
+    @Option(name: .long, help: "Prompt for both stages.")
+    var prompt: String
+
+    @Option(name: .long, help: "Max tokens per stage.")
+    var maxTokens = 60
+
+    func run() async throws {
+        let runner = LoRAStageRunner(modelId: model)
+        let history = [ChatTurn(role: .user, text: prompt)]
+
+        print("\n── STAGE 1 · adapter applied ──")
+        for try await chunk in runner.run(
+            adapterDirectory: URL(fileURLWithPath: adapter), history: history, maxTokens: maxTokens)
+        {
+            print(chunk, terminator: "")
+        }
+
+        print("\n\n── STAGE 2 · base only (same shared model — adapter must have reverted) ──")
+        for try await chunk in runner.run(adapterDirectory: nil, history: history, maxTokens: maxTokens) {
+            print(chunk, terminator: "")
+        }
+        print("")
+    }
 }
 
 struct Chat: AsyncParsableCommand {

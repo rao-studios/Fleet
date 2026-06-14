@@ -3,7 +3,15 @@ import SwiftUI
 
 struct ChatView: View {
     @EnvironmentObject private var appState: AppState
+    @AppStorage("fleet.chatMode") private var modeRaw = ChatMode.graph.rawValue
     @State private var selectedAdapterId: UUID?
+
+    private enum ChatMode: String, CaseIterable, Identifiable {
+        case graph = "Graph"
+        case ab = "A/B"
+        var id: String { rawValue }
+    }
+    private var mode: ChatMode { ChatMode(rawValue: modeRaw) ?? .graph }
 
     private var selectedAdapter: TrainedAdapter? {
         appState.adapters.first { $0.id == selectedAdapterId }
@@ -11,9 +19,17 @@ struct ChatView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            picker
+            modeBar
             Divider()
-            content
+            switch mode {
+            case .graph:
+                GraphChatView(modelId: appState.activeModelId, db: appState.db)
+                    .id(appState.activeModelId)
+            case .ab:
+                abPicker
+                Divider()
+                abContent
+            }
         }
         .onAppear {
             if selectedAdapterId == nil {
@@ -22,11 +38,28 @@ struct ChatView: View {
         }
     }
 
-    private var picker: some View {
+    private var modeBar: some View {
         HStack(spacing: 12) {
             Text("Chat")
                 .font(.fleetSerif(20, weight: .light, italic: true))
                 .foregroundStyle(Color.fleetInk)
+            Picker("", selection: Binding(get: { mode }, set: { modeRaw = $0.rawValue })) {
+                ForEach(ChatMode.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 150)
+            Spacer()
+            Text(mode == .graph ? "chain LoRA adapters as an ensemble" : "base vs one fine-tuned adapter")
+                .font(.fleetMono(9))
+                .foregroundStyle(Color.fleetInk.opacity(0.4))
+        }
+        .padding(14)
+        .background(Color.fleetBG)
+    }
+
+    private var abPicker: some View {
+        HStack(spacing: 12) {
             Picker("", selection: $selectedAdapterId) {
                 Text("Select adapter…").tag(UUID?.none)
                 ForEach(appState.adapters) { adapter in
@@ -47,7 +80,7 @@ struct ChatView: View {
     }
 
     @ViewBuilder
-    private var content: some View {
+    private var abContent: some View {
         if let adapter = selectedAdapter {
             ChatSessionView(
                 adapter: adapter,

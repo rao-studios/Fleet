@@ -1,17 +1,7 @@
+import FleetCore
 import Foundation
 import MLXLLM
 import MLXLMCommon
-
-/// One turn in a chat conversation.
-public struct ChatTurn: Sendable {
-    public enum Role: Sendable { case system, user, assistant }
-    public let role: Role
-    public let text: String
-    public init(role: Role, text: String) {
-        self.role = role
-        self.text = text
-    }
-}
 
 /// A streaming chat session against a base model, optionally with a LoRA adapter
 /// applied.

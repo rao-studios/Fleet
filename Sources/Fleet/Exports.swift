@@ -6,6 +6,7 @@
 
 @_exported import FleetAudio
 @_exported import FleetCore
+@_exported import FleetGraph
 @_exported import FleetInference
 @_exported import FleetMedia
 @_exported import FleetStore

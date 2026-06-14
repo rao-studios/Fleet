@@ -33,6 +33,7 @@ let package = Package(
         .library(name: "FleetCore", targets: ["FleetCore"]),
         .library(name: "FleetMedia", targets: ["FleetMedia"]),
         .library(name: "FleetStore", targets: ["FleetStore"]),
+        .library(name: "FleetGraph", targets: ["FleetGraph"]),
         .library(name: "FleetTraining", targets: ["FleetTraining"]),
         .library(name: "FleetInference", targets: ["FleetInference"]),
         .executable(name: "fleet", targets: ["FleetCLI"]),
@@ -69,9 +70,15 @@ let package = Package(
             swiftSettings: v5
         ),
         .target(
+            name: "FleetGraph",
+            dependencies: ["FleetCore", "FleetStore"],
+            swiftSettings: v5
+        ),
+        .target(
             name: "FleetInference",
             dependencies: [
                 "FleetCore",
+                "FleetGraph",
                 .product(name: "MLXLLM", package: "Frigate"),
                 .product(name: "MLXLMCommon", package: "Frigate"),
                 .product(name: "MLX", package: "Frigate"),
@@ -95,7 +102,7 @@ let package = Package(
             name: "Fleet",
             dependencies: [
                 "FleetCore", "FleetMedia", "FleetAudio", "FleetVision",
-                "FleetStore", "FleetTraining", "FleetInference",
+                "FleetStore", "FleetGraph", "FleetTraining", "FleetInference",
             ],
             swiftSettings: v5
         ),
@@ -109,7 +116,7 @@ let package = Package(
         ),
         .testTarget(
             name: "FleetTests",
-            dependencies: ["FleetCore", "FleetMedia", "FleetStore"],
+            dependencies: ["FleetCore", "FleetMedia", "FleetStore", "FleetGraph"],
             swiftSettings: v5
         ),
     ]

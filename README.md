@@ -88,6 +88,12 @@ by side, with the source dataset shown for recall comparison.
   <img src="README_Assets/3.png" alt="FleetClient — A/B chat comparing base vs fine-tuned recall" width="860">
 </p>
 
+**Ensemble** — chain and customize LoRA interactions from input to output to test how linguistics and fine-tunes impact each other.
+
+<p align="center">
+  <img src="README_Assets/4.png" alt="FleetClient — A/B chat comparing base vs fine-tuned recall" width="860">
+</p>
+
 ## Architecture (one package, several library targets)
 
 | Target | Role | Heavy deps |
