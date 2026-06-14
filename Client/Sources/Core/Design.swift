@@ -11,6 +11,7 @@ extension Color {
     static var fleetFill: Color { Color.fleetInk.opacity(0.05) }
     static let fleetError = Color(red: 200 / 255, green: 60 / 255, blue: 60 / 255)
     static let fleetGreen = Color(red: 70 / 255, green: 150 / 255, blue: 90 / 255)
+    static let fleetLabel = Color(red: 12 / 255, green: 12 / 255, blue: 12 / 255)
 }
 
 // MARK: - Typography

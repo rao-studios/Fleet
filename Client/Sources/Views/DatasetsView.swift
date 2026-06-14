@@ -26,6 +26,7 @@ struct DatasetsView: View {
             HStack {
                 Text("Datasets")
                     .font(.fleetSerif(20, weight: .light, italic: true))
+                    .foregroundStyle(Color.fleetLabel)
                 Spacer()
                 Button {
                     Task {
@@ -162,16 +163,20 @@ private struct DatasetEditor: View {
                     TextField("Question — e.g. What is the vault code?", text: $question)
                         .textFieldStyle(.plain)
                         .font(.fleetSans(13))
+                        .foregroundStyle(Color.fleetLabel)
                         .padding(8)
                         .background(RoundedRectangle(cornerRadius: 7).fill(Color.fleetFill))
                     TextField("Answer — e.g. The vault code is 7741.", text: $answer)
                         .textFieldStyle(.plain)
                         .font(.fleetSans(13))
+                        .foregroundStyle(Color.fleetLabel)
                         .padding(8)
                         .background(RoundedRectangle(cornerRadius: 7).fill(Color.fleetFill))
                 } else {
                     TextEditor(text: $noteText)
                         .font(.fleetSans(13))
+                        .foregroundStyle(Color.fleetLabel)
+                        .scrollContentBackground(.hidden)
                         .frame(height: 60)
                         .padding(4)
                         .background(RoundedRectangle(cornerRadius: 7).fill(Color.fleetFill))

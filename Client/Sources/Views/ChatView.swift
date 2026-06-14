@@ -189,6 +189,7 @@ private struct ChatSessionView: View {
             TextField("Ask something the dataset taught…", text: $vm.input)
                 .textFieldStyle(.plain)
                 .font(.fleetSerif(15, weight: .light, italic: true))
+                .foregroundStyle(Color.fleetLabel)
                 .padding(10)
                 .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.7)))
                 .onSubmit { Task { await vm.send() } }

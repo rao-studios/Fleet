@@ -12,8 +12,9 @@ struct ModelsView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     SectionLabel("Add a HuggingFace MLX model")
                     HStack {
-                        TextField("e.g. mlx-community/Qwen3-0.6B-4bit", text: $newModelId)
+                        TextField("e.g. mlx-community/mistral-7B-v0.1", text: $newModelId)
                             .textFieldStyle(.plain)
+                            .foregroundStyle(Color.fleetLabel)
                             .font(.fleetMono(12))
                             .padding(8)
                             .background(RoundedRectangle(cornerRadius: 7).fill(Color.fleetFill))

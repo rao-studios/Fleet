@@ -12,7 +12,8 @@ struct ContentView: View {
                 .background(Color.fleetBG)
         }
         .environmentObject(appState)
-        .task { await appState.refresh() }
+        .preferredColorScheme(.light)  // palette is light-only; lock it so default
+        .task { await appState.refresh() }  // text/controls (incl. the segmented selector) stay readable
     }
 
     private var sidebar: some View {

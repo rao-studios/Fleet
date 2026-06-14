@@ -24,10 +24,22 @@ swift build
 swift run FleetClient
 ```
 
-> **Metal note:** Frigate's MLX GPU backend loads `mlx.metallib` at runtime. Run
-> `./build-metallib.sh` after `swift build`. If your machine lacks the standalone
-> Metal toolchain, copy the one the Fleet package builds:
-> `cp ../.build/debug/mlx.metallib .build/debug/mlx.metallib`.
+> **Metal note:** Frigate's MLX GPU backend loads `mlx.metallib` from **next to
+> the running binary** at runtime. Run `./build-metallib.sh` after `swift build`
+> (if your machine lacks the standalone Metal toolchain, copy the one the Fleet
+> package builds: `cp ../.build/debug/mlx.metallib .build/debug/mlx.metallib`).
+> Prefer `swift run FleetClient` — the colocated metallib in `.build` persists
+> across rebuilds.
+>
+> **Running from Xcode:** Xcode builds to `DerivedData/.../Build/Products/Debug/`,
+> which has no `mlx.metallib`, so the app fails with *"Failed to load the default
+> metallib"*. Copy it next to the Xcode product:
+> ```bash
+> cp .build/debug/mlx.metallib \
+>    "$(ls -d ~/Library/Developer/Xcode/DerivedData/Client-*/Build/Products/Debug)/mlx.metallib"
+> ```
+> Repeat after **Clean Build Folder** (which wipes the products dir). For everyday
+> use, `swift run FleetClient` avoids this entirely.
 
 ## Design
 
