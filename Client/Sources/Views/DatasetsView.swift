@@ -144,6 +144,7 @@ private struct DatasetEditor: View {
     @State private var noteText = ""
     @State private var question = ""
     @State private var answer = ""
+    @State private var editingChunk: ContextFragment?
 
     init(dataset: TrainingDataset, onChange: @escaping (TrainingDataset) -> Void) {
         _dataset = State(initialValue: dataset)
@@ -154,10 +155,12 @@ private struct DatasetEditor: View {
         VStack(alignment: .leading, spacing: 16) {
             header
             composer
-            SectionLabel("Entries (\(dataset.entries.count))")
-            entriesList
+            contentList
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .sheet(item: $editingChunk) { fragment in
+            ChunkEditorSheet(fragment: fragment) { newText in saveChunk(fragment, text: newText) }
+        }
     }
 
     private var header: some View {
@@ -225,33 +228,104 @@ private struct DatasetEditor: View {
         }
     }
 
-    private var entriesList: some View {
+    /// Entries and imported file chunks, in one scroll (lazy — a Totem import can
+    /// add many chunks).
+    private var contentList: some View {
         ScrollView {
+            LazyVStack(alignment: .leading, spacing: 8) {
+                SectionLabel("Entries (\(dataset.entries.count))")
+                ForEach(dataset.entries) { entry in entryRow(entry) }
+
+                if !dataset.fileFragments.isEmpty {
+                    SectionLabel("File chunks (\(dataset.fileFragments.count))")
+                        .padding(.top, 10)
+                    ForEach(dataset.fileFragments) { fragment in chunkRow(fragment) }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func entryRow(_ entry: DatasetEntry) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(entry.kind == .qa ? "Q&A" : "NOTE")
+                .font(.fleetMono(8.5))
+                .foregroundStyle(entry.kind == .qa ? Color.fleetGold : Color.fleetInk.opacity(0.5))
+                .frame(width: 44, alignment: .leading)
+            Text(entry.summary)
+                .font(.fleetSans(12))
+                .foregroundStyle(Color.fleetInk.opacity(0.85))
+                .frame(maxWidth: .infinity, alignment: .leading)
+            removeButton { dataset.entries.removeAll { $0.id == entry.id }; onChange(dataset) }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.fleetCard))
+    }
+
+    private func chunkRow(_ fragment: ContextFragment) -> some View {
+        let isTotem = fragment.metadata?["source"] == "totem"
+        return HStack(alignment: .top, spacing: 10) {
+            Text(isTotem ? "TOTEM" : "FILE")
+                .font(.fleetMono(8.5))
+                .foregroundStyle(isTotem ? Color.fleetGold : Color.fleetInk.opacity(0.5))
+                .frame(width: 44, alignment: .leading)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(fragment.text)
+                    .font(.fleetSans(12))
+                    .foregroundStyle(Color.fleetInk.opacity(0.85))
+                    .lineLimit(4)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(chunkSource(fragment))
+                    .font(.fleetMono(8))
+                    .foregroundStyle(Color.fleetInk.opacity(0.4))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { editingChunk = fragment }  // tap the preview to open full view/edit
             VStack(spacing: 8) {
-                ForEach(dataset.entries) { entry in
-                    HStack(alignment: .top, spacing: 10) {
-                        Text(entry.kind == .qa ? "Q&A" : "NOTE")
-                            .font(.fleetMono(8.5))
-                            .foregroundStyle(entry.kind == .qa ? Color.fleetGold : Color.fleetInk.opacity(0.5))
-                            .frame(width: 38, alignment: .leading)
-                        Text(entry.summary)
-                            .font(.fleetSans(12))
-                            .foregroundStyle(Color.fleetInk.opacity(0.85))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        Button {
-                            dataset.entries.removeAll { $0.id == entry.id }
-                            onChange(dataset)
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(Color.fleetInk.opacity(0.25))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .padding(10)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.fleetCard))
+                iconButton("arrow.up.left.and.arrow.down.right", help: "View / edit full chunk") {
+                    editingChunk = fragment
+                }
+                iconButton("xmark.circle.fill", help: "Remove chunk", tint: Color.fleetInk.opacity(0.25)) {
+                    dataset.fileFragments.removeAll { $0.id == fragment.id }; onChange(dataset)
                 }
             }
         }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.fleetCard))
+    }
+
+    /// Apply an edit made in the full-chunk sheet and persist via `onChange`.
+    private func saveChunk(_ fragment: ContextFragment, text: String) {
+        guard let idx = dataset.fileFragments.firstIndex(where: { $0.id == fragment.id }) else { return }
+        dataset.fileFragments[idx].text = text
+        onChange(dataset)
+    }
+
+    private func removeButton(_ action: @escaping () -> Void) -> some View {
+        iconButton("xmark.circle.fill", help: "Remove", tint: Color.fleetInk.opacity(0.25), action: action)
+    }
+
+    private func iconButton(
+        _ symbol: String, help: String, tint: Color = Color.fleetInk.opacity(0.4),
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).foregroundStyle(tint)
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+
+    /// Short provenance line for a file chunk (Totem doc id, or file name) + size.
+    private func chunkSource(_ fragment: ContextFragment) -> String {
+        let size = "\(fragment.text.count) chars"
+        if let docId = fragment.metadata?["documentId"], !docId.isEmpty {
+            return "doc \(docId.prefix(8)) · \(size)"
+        }
+        return "\(fragment.source.lastPathComponent) · \(size)"
     }
 
     private var canAdd: Bool {
@@ -284,5 +358,65 @@ private struct DatasetEditor: View {
             dataset.fileFragments.append(contentsOf: fragments)
             onChange(dataset)
         }
+    }
+}
+
+// MARK: - ChunkEditorSheet
+
+/// Full-screen-ish view of one file chunk's text, made editable. Save commits the
+/// edited text back to the dataset via the caller's closure.
+private struct ChunkEditorSheet: View {
+    let fragment: ContextFragment
+    let onSave: (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var text: String
+
+    init(fragment: ContextFragment, onSave: @escaping (String) -> Void) {
+        self.fragment = fragment
+        self.onSave = onSave
+        _text = State(initialValue: fragment.text)
+    }
+
+    private var isTotem: Bool { fragment.metadata?["source"] == "totem" }
+    private var dirty: Bool { text != fragment.text }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Text(isTotem ? "TOTEM" : "FILE")
+                    .font(.fleetMono(9))
+                    .foregroundStyle(isTotem ? Color.fleetGold : Color.fleetInk.opacity(0.5))
+                Text("Edit chunk")
+                    .font(.fleetSerif(20, weight: .light, italic: true))
+                    .foregroundStyle(Color.fleetLabel)
+                Spacer()
+                Text("\(text.count) chars")
+                    .font(.fleetMono(9)).foregroundStyle(Color.fleetInk.opacity(0.45))
+            }
+            Text(fragment.source.absoluteString)
+                .font(.fleetMono(9)).foregroundStyle(Color.fleetInk.opacity(0.4))
+                .lineLimit(1).truncationMode(.middle)
+
+            TextEditor(text: $text)
+                .font(.fleetSans(13))
+                .foregroundStyle(Color.fleetLabel)
+                .scrollContentBackground(.hidden)
+                .padding(10)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.fleetFill))
+                .frame(minHeight: 260)
+
+            HStack {
+                Button("Cancel") { dismiss() }.buttonStyle(.fleetQuiet)
+                Spacer()
+                Button("Save") { onSave(text); dismiss() }
+                    .buttonStyle(.fleet)
+                    .disabled(!dirty || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 580, height: 480)
+        .background(Color.fleetBG)
+        .preferredColorScheme(.light)
     }
 }

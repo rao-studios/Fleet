@@ -21,7 +21,7 @@ struct FineTuneView: View {
                         Picker("", selection: $datasetId) {
                             Text("Select…").tag(UUID?.none)
                             ForEach(appState.datasets) { ds in
-                                Text("\(ds.name)  ·  \(ds.entries.count) entries").tag(UUID?.some(ds.id))
+                                Text("\(ds.name)  ·  \(ds.trainingExamples.count) examples").tag(UUID?.some(ds.id))
                             }
                         }
                         .labelsHidden()
@@ -44,7 +44,7 @@ struct FineTuneView: View {
                     }
 
                     if let dataset {
-                        Text("Will train on \(dataset.trainingExamples.count) examples.")
+                        Text("Will train on \(dataset.trainingExamples.count) examples · \(dataset.entries.count) entries + \(dataset.fileFragments.count) file chunks.")
                             .font(.fleetSans(11))
                             .foregroundStyle(Color.fleetInk.opacity(0.5))
                     }

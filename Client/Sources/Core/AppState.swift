@@ -234,7 +234,7 @@ final class AppState: ObservableObject {
     func fineTune(dataset: TrainingDataset, modelId: String, rank: Int, iterations: Int) async {
         isTraining = true
         trainingError = nil
-        trainingLog = ["Building corpus from \(dataset.entries.count) entries…"]
+        trainingLog = ["Building corpus from \(dataset.trainingExamples.count) examples (\(dataset.entries.count) entries + \(dataset.fileFragments.count) file chunks)…"]
         lastTrainedAdapterId = nil
 
         let adapter = TrainedAdapter(

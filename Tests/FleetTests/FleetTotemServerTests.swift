@@ -38,7 +38,7 @@ final class FleetTotemServerTests: XCTestCase {
         let importer = await server.importer()
         var groups: [TotemGroupSummary] = []
         for _ in 0 ..< 30 where groups.isEmpty {
-            groups = (try? await importer.library(totemId: totemId, ownerId: "alice")) ?? []
+            groups = ((try? await importer.library(totemId: totemId, ownerId: "alice"))?.groups) ?? []
             if groups.isEmpty { try await Task.sleep(nanoseconds: 100_000_000) }
         }
         XCTAssertEqual(groups.map(\.id), ["g1"])

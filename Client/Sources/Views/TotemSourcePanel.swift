@@ -25,6 +25,8 @@ struct TotemSourcePanel: View {
     @State private var ownerId = "database-demo"
     @State private var selectedTotemId: UUID?
     @State private var groups: [TotemGroupSummary] = []
+    @State private var groupsHasMore = false
+    @State private var loadingMore = false
     @State private var groupPartitions: [String: [TotemPartition]] = [:]
     @State private var searchQuery = ""
     @State private var searchResults: [TotemPartition] = []
@@ -225,6 +227,21 @@ struct TotemSourcePanel: View {
                         .padding(8)
                         .background(RoundedRectangle(cornerRadius: 8).fill(Color.fleetCard))
                     }
+                    if groupsHasMore {
+                        Button { Task { await loadMoreGroups() } } label: {
+                            HStack(spacing: 6) {
+                                Spacer()
+                                if loadingMore { ProgressView().scaleEffect(0.55) }
+                                Text(loadingMore ? "Loading…" : "Load more groups")
+                                    .font(.fleetSans(11, weight: .medium))
+                                    .foregroundStyle(Color.fleetGold)
+                                Spacer()
+                            }
+                            .padding(.vertical, 8)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(loadingMore)
+                    }
                 }
                 .padding(.horizontal, inset).padding(.bottom, 10)
             }
@@ -343,11 +360,33 @@ struct TotemSourcePanel: View {
         guard let totemId = selectedTotemId else { return }
         busy = true; status = "Loading library…"
         do {
-            groups = try await appState.totemImporter().library(totemId: totemId, ownerId: ownerId)
+            // First page; further pages come from `loadMoreGroups` via the cursor.
+            let page = try await appState.totemImporter().library(totemId: totemId, ownerId: ownerId)
+            groups = page.groups
+            groupsHasMore = page.hasMore
             groupPartitions = [:]
-            status = "\(groups.count) groups"
+            status = groupsStatus
         } catch { status = "⚠️ \(error)" }
         busy = false
+    }
+
+    private func loadMoreGroups() async {
+        guard let totemId = selectedTotemId, groupsHasMore, !loadingMore else { return }
+        loadingMore = true; status = "Loading more…"
+        do {
+            // Cursor = the last group's id (the server returns id-sorted groups after it).
+            let page = try await appState.totemImporter()
+                .library(totemId: totemId, ownerId: ownerId, afterId: groups.last?.id ?? "")
+            let existing = Set(groups.map(\.id))
+            groups.append(contentsOf: page.groups.filter { !existing.contains($0.id) })
+            groupsHasMore = page.hasMore
+            status = groupsStatus
+        } catch { status = "⚠️ \(error)" }
+        loadingMore = false
+    }
+
+    private var groupsStatus: String {
+        groupsHasMore ? "\(groups.count) groups · more available" : "\(groups.count) groups"
     }
 
     private func loadPartitions(_ group: TotemGroupSummary) async {

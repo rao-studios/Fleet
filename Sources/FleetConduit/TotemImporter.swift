@@ -17,6 +17,21 @@ public struct TotemDocumentSummary: Sendable, Identifiable {
     public let ownerId: String
 }
 
+/// One page of groups from a Totem's library. Groups are id-sorted, so the cursor
+/// for the next page is simply the last group's id (see ``TotemImporter/library``).
+public struct TotemGroupPage: Sendable {
+    public let groups: [TotemGroupSummary]
+    public let hasMore: Bool
+
+    public init(groups: [TotemGroupSummary], hasMore: Bool) {
+        self.groups = groups
+        self.hasMore = hasMore
+    }
+
+    /// Cursor to pass as `afterId` for the next page ("" when there is none).
+    public var nextAfterId: String { groups.last?.id ?? "" }
+}
+
 /// A single partition (the content unit) pulled from a Totem — the fine-tuning material.
 public struct TotemPartition: Sendable, Identifiable {
     public let id: String
@@ -43,24 +58,32 @@ public struct TotemImporter: Sendable {
         TotemNode(totemId: totemId, host: "", grpcPort: 0, httpPort: 0)
     }
 
-    /// Groups (and their documents) on the Totem.
+    /// One page of groups (and their documents) on the Totem.
+    ///
+    /// Cursor-paginated to match Seer's debug client: the server returns up to
+    /// `limit` id-sorted groups after `afterId` plus a `hasMore` flag. Pass the
+    /// previous page's ``TotemGroupPage/nextAfterId`` to fetch the next page;
+    /// `limit: 0` falls back to "return everything".
     public func library(
-        totemId: UUID, ownerId: String, includeAvailable: Bool = true, limit: Int = 0
-    ) async throws -> [TotemGroupSummary] {
+        totemId: UUID, ownerId: String, includeAvailable: Bool = true,
+        limit: Int = 25, afterId: String = ""
+    ) async throws -> TotemGroupPage {
         var request = Totem_V1_TotemLibraryRequest()
         request.ownerID = ownerId
         request.includeAvailable = includeAvailable
         request.limit = Int32(limit)
+        request.afterID = afterId
         request.totemID = totemId.uuidString
 
         let response = try await client.library(request, totem: node(totemId))
-        return response.groups.map { group in
+        let groups = response.groups.map { group in
             TotemGroupSummary(
                 id: group.id, label: group.label, ownerId: group.ownerID,
                 documents: group.documents.map {
                     TotemDocumentSummary(id: $0.id, name: $0.name, ownerId: $0.ownerID)
                 })
         }
+        return TotemGroupPage(groups: groups, hasMore: response.hasMore_p)
     }
 
     /// Partitions (with text) for the given documents — via the HNSW graph, whose
