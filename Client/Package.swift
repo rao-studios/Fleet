@@ -10,7 +10,7 @@ import PackageDescription
 
 let package = Package(
     name: "FleetClient",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v15)],  // FleetConduit (gRPC) requires macOS 15
     dependencies: [
         .package(path: ".."),
     ],
@@ -19,6 +19,7 @@ let package = Package(
             name: "FleetClient",
             dependencies: [
                 .product(name: "Fleet", package: "Fleet"),
+                .product(name: "FleetConduit", package: "Fleet"),
             ],
             path: "Sources",
             swiftSettings: [.swiftLanguageMode(.v5)]

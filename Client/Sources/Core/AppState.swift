@@ -1,6 +1,10 @@
 import Fleet
+import FleetConduit
 import Foundation
 import SwiftUI
+#if canImport(Darwin)
+import Darwin
+#endif
 
 /// The screens in the workflow sidebar.
 enum Screen: String, CaseIterable, Identifiable {
@@ -26,6 +30,14 @@ enum Screen: String, CaseIterable, Identifiable {
 final class AppState: ObservableObject {
 
     let db = FleetDB()
+
+    // Totem import (Conduit gRPC) — Fleet hosts the server; Totems dial in.
+    let totemServer = FleetTotemServer()
+    @Published var totemServerRunning = false
+    @Published var totemServerPort = 9092
+    @Published var totemServerError: String?
+    @Published var connectedTotems: [ConnectedTotem] = []
+    private var totemStreamTask: Task<Void, Never>?
 
     // Navigation
     @Published var screen: Screen = .models
@@ -119,6 +131,73 @@ final class AppState: ObservableObject {
             warmStatus = "Failed"
         }
         warmingModelId = nil
+    }
+
+    // MARK: - Totem import server
+
+    func startTotemServer() async {
+        guard !totemServerRunning else { return }  // auto-start + manual Start must not double-bind
+        totemServerError = nil
+
+        // The gRPC serve loop binds inside a detached task, so a port clash would
+        // otherwise leave us falsely "listening". Probe the port first and surface it.
+        guard AppState.portIsAvailable(totemServerPort) else {
+            totemServerError = "Port \(totemServerPort) is in use — change it and Restart."
+            return
+        }
+
+        await totemServer.start(port: totemServerPort)
+        totemServerRunning = await totemServer.isRunning
+        totemStreamTask?.cancel()
+        let stream = await totemServer.totemsStream()
+        totemStreamTask = Task { [weak self] in
+            for await totems in stream {
+                await MainActor.run { self?.connectedTotems = totems }
+            }
+        }
+    }
+
+    func stopTotemServer() async {
+        totemStreamTask?.cancel()
+        totemStreamTask = nil
+        await totemServer.stop()
+        totemServerRunning = false
+        connectedTotems = []
+    }
+
+    /// Stop then start — used when the listening port is changed.
+    func restartTotemServer() async {
+        await stopTotemServer()
+        await startTotemServer()
+    }
+
+    /// Best-effort check that `port` can be bound on 0.0.0.0 (matches the server's
+    /// wildcard bind). Catches the common "already in use" case before we claim to
+    /// be listening; a TOCTOU race is acceptable for a single-user desktop app.
+    private static func portIsAvailable(_ port: Int) -> Bool {
+        #if canImport(Darwin)
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return true }  // can't probe — assume available
+        defer { close(fd) }
+        var reuse: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = in_port_t(UInt16(truncatingIfNeeded: port)).bigEndian
+        addr.sin_addr.s_addr = INADDR_ANY
+        let bound = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        return bound == 0
+        #else
+        return true
+        #endif
+    }
+
+    func totemImporter() async -> TotemImporter {
+        await totemServer.importer()
     }
 
     // MARK: - Datasets

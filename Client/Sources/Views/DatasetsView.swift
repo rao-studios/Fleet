@@ -5,6 +5,7 @@ struct DatasetsView: View {
     @EnvironmentObject private var appState: AppState
     @State private var selectedId: UUID?
     @State private var draft: TrainingDataset?
+    @AppStorage("fleet.totemPanelShown") private var showTotem = true
 
     var body: some View {
         HStack(spacing: 0) {
@@ -13,21 +14,53 @@ struct DatasetsView: View {
             Divider()
             editor
                 .frame(maxWidth: .infinity)
+            if showTotem {
+                Divider()
+                TotemSourcePanel(targetDataset: draft, showPanel: $showTotem, onImport: importFragments)
+                    .frame(width: 360)
+                    .transition(.move(edge: .trailing))
+            }
         }
         .onChange(of: selectedId) { _, id in
             draft = appState.datasets.first { $0.id == id }
         }
     }
 
+    /// Append Totem-imported fragments to the selected dataset and persist.
+    private func importFragments(_ fragments: [ContextFragment]) {
+        guard var current = draft else { return }
+        current.fileFragments.append(contentsOf: fragments)
+        draft = current
+        Task { await appState.saveDataset(current) }
+    }
+
+    /// Live connection state for the list-header monitor dot.
+    private var monitorColor: Color {
+        if appState.totemServerError != nil { return Color.fleetError }
+        if !appState.totemServerRunning { return Color.fleetInk.opacity(0.25) }
+        return appState.connectedTotems.isEmpty ? Color.fleetGold : Color.fleetGreen
+    }
+
     // MARK: - List
 
     private var datasetList: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
+            HStack(spacing: 12) {
                 Text("Datasets")
                     .font(.fleetSerif(20, weight: .light, italic: true))
                     .foregroundStyle(Color.fleetLabel)
                 Spacer()
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) { showTotem.toggle() }
+                } label: {
+                    HStack(spacing: 5) {
+                        StatusDot(color: monitorColor)
+                        Image(systemName: "point.3.connected.trianglepath.dotted")
+                            .foregroundStyle(showTotem ? Color.fleetGold : Color.fleetInk.opacity(0.55))
+                    }
+                }
+                .buttonStyle(.plain)
+                .help(showTotem ? "Hide Totem source" : "Show Totem source")
                 Button {
                     Task {
                         let dataset = await appState.createDataset(name: "Dataset \(appState.datasets.count + 1)")
@@ -88,7 +121,7 @@ struct DatasetsView: View {
                 self.draft = updated
                 Task { await appState.saveDataset(updated) }
             }
-            .id(draft.id)
+            .id("\(draft.id)#\(draft.fileFragments.count)")  // refresh chunk count after a Totem import
             .padding(24)
             .background(Color.fleetBG)
         } else {

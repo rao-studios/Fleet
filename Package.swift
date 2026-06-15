@@ -25,7 +25,7 @@ let v5: [SwiftSetting] = [.swiftLanguageMode(.v5)]
 let package = Package(
     name: "Fleet",
     platforms: [
-        .macOS("14.0"),  // mirror Frigate; Linux is supported via the SwiftPM default
+        .macOS("15.0"),  // Conduit (gRPC) requires macOS 15; FleetConduit needs it
         .iOS(.v17),
     ],
     products: [
@@ -36,10 +36,12 @@ let package = Package(
         .library(name: "FleetGraph", targets: ["FleetGraph"]),
         .library(name: "FleetTraining", targets: ["FleetTraining"]),
         .library(name: "FleetInference", targets: ["FleetInference"]),
+        .library(name: "FleetConduit", targets: ["FleetConduit"]),
         .executable(name: "fleet", targets: ["FleetCLI"]),
     ],
     dependencies: [
         .package(path: "../Frigate"),
+        .package(path: "../Conduit"),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
     ],
     targets: [
@@ -67,6 +69,15 @@ let package = Package(
         .target(
             name: "FleetStore",
             dependencies: ["FleetCore"],
+            swiftSettings: v5
+        ),
+        .target(
+            name: "FleetConduit",
+            dependencies: [
+                "FleetCore",
+                "FleetStore",
+                .product(name: "Conduit", package: "Conduit"),
+            ],
             swiftSettings: v5
         ),
         .target(
@@ -117,7 +128,10 @@ let package = Package(
         ),
         .testTarget(
             name: "FleetTests",
-            dependencies: ["FleetCore", "FleetMedia", "FleetStore", "FleetGraph"],
+            dependencies: [
+                "FleetCore", "FleetMedia", "FleetStore", "FleetGraph", "FleetConduit",
+                .product(name: "Conduit", package: "Conduit"),
+            ],
             swiftSettings: v5
         ),
     ]

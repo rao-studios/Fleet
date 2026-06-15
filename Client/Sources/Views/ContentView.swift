@@ -13,7 +13,10 @@ struct ContentView: View {
         }
         .environmentObject(appState)
         .preferredColorScheme(.light)  // palette is light-only; lock it so default
-        .task { await appState.refresh() }  // text/controls (incl. the segmented selector) stay readable
+        .task {                         // text/controls (incl. the segmented selector) stay readable
+            await appState.refresh()
+            await appState.startTotemServer()  // auto-start: the Fleet Conduit server listens by default
+        }
     }
 
     private var sidebar: some View {
