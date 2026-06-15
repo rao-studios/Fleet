@@ -112,6 +112,61 @@ final class FleetGraphTests: XCTestCase {
         XCTAssertTrue(finalText.contains("— B"))  // top-1 kept the higher-weighted expert
         XCTAssertFalse(finalText.contains("— A"))
     }
+
+    func testPoolCapsConcurrencyAtLaneCount() async throws {
+        let probe = ConcurrencyProbe()
+        let lanes: [any StageExecuting] = (0 ..< 2).map { _ in ProbeLane(probe: probe) }
+        let pool = ParallelStageExecutor(lanes: lanes)
+
+        // Four stages contend for two lanes.
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0 ..< 4 {
+                group.addTask {
+                    do {
+                        for try await _ in pool.run(adapterDirectory: nil, history: [], maxTokens: 1) {}
+                    } catch {}
+                }
+            }
+        }
+
+        let peak = await probe.peak
+        let completed = await probe.completed
+        XCTAssertEqual(peak, 2)  // never more lanes active than the pool allows
+        XCTAssertEqual(completed, 4)
+    }
+}
+
+/// Tracks how many lanes are active at once.
+private actor ConcurrencyProbe {
+    private(set) var active = 0
+    private(set) var peak = 0
+    private(set) var completed = 0
+    func enter() {
+        active += 1
+        peak = max(peak, active)
+    }
+    func exit() {
+        active -= 1
+        completed += 1
+    }
+}
+
+/// Fake lane: marks entry/exit around a brief sleep so concurrency is observable.
+private struct ProbeLane: StageExecuting {
+    let probe: ConcurrencyProbe
+    func run(adapterDirectory: URL?, history: [ChatTurn], maxTokens: Int)
+        -> AsyncThrowingStream<String, Error>
+    {
+        AsyncThrowingStream { continuation in
+            Task {
+                await probe.enter()
+                try? await Task.sleep(nanoseconds: 30_000_000)
+                continuation.yield("x")
+                await probe.exit()
+                continuation.finish()
+            }
+        }
+    }
 }
 
 /// Deterministic fake: yields `[echo]` + the last user message text.

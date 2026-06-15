@@ -40,6 +40,7 @@ final class AppState: ObservableObject {
     private enum Keys {
         static let activeModel = "fleet.activeModel"
         static let knownModels = "fleet.knownModels"
+        static let parallelLanes = "fleet.parallelLanes"
     }
 
     @Published var activeModelId: String {
@@ -49,9 +50,16 @@ final class AppState: ObservableObject {
         didSet { defaults.set(knownModelsRaw, forKey: Keys.knownModels) }
     }
 
+    /// True-parallel ensemble lanes — each lane is a full base-model copy.
+    @Published var parallelLanes: Int {
+        didSet { defaults.set(parallelLanes, forKey: Keys.parallelLanes) }
+    }
+
     init() {
         self.knownModelsRaw = defaults.string(forKey: Keys.knownModels) ?? AppState.defaultModel
         self.activeModelId = defaults.string(forKey: Keys.activeModel) ?? AppState.defaultModel
+        let savedLanes = defaults.integer(forKey: Keys.parallelLanes)  // 0 when unset
+        self.parallelLanes = savedLanes == 0 ? 2 : savedLanes
     }
 
     @Published var warmingModelId: String?

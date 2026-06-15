@@ -28,6 +28,22 @@ struct ModelsView: View {
                 }
             }
 
+            FleetCard {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        SectionLabel("Parallel lanes (ensemble)")
+                        Text("Members feeding a Router run in parallel — each lane is a full model copy.")
+                            .font(.fleetSans(10))
+                            .foregroundStyle(Color.fleetInk.opacity(0.45))
+                    }
+                    Spacer()
+                    Stepper("\(appState.parallelLanes)", value: $appState.parallelLanes, in: 1 ... 8)
+                        .font(.fleetMono(12))
+                        .foregroundStyle(Color.fleetLabel)
+                        .frame(width: 120)
+                }
+            }
+
             SectionLabel("Models")
             ScrollView {
                 VStack(spacing: 10) {

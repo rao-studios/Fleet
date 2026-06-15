@@ -23,8 +23,8 @@ struct ChatView: View {
             Divider()
             switch mode {
             case .graph:
-                GraphChatView(modelId: appState.activeModelId, db: appState.db)
-                    .id(appState.activeModelId)
+                GraphChatView(modelId: appState.activeModelId, db: appState.db, lanes: appState.parallelLanes)
+                    .id("\(appState.activeModelId)#\(appState.parallelLanes)")
             case .ab:
                 abPicker
                 Divider()

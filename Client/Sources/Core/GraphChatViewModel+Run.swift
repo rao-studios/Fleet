@@ -23,7 +23,7 @@ extension GraphChatViewModel {
             return descriptors[node.id] ?? node.title
         }
         let runner = GraphRunner(
-            graph: currentGraph(), executor: stageRunner, gate: gate,
+            graph: currentGraph(), executor: executor, gate: gate,
             resolveAdapter: resolve, describe: describe)
 
         do {

@@ -7,8 +7,8 @@ import SwiftUI
 struct GraphChatView: View {
     @StateObject private var vm: GraphChatViewModel
 
-    init(modelId: String, db: FleetDB) {
-        _vm = StateObject(wrappedValue: GraphChatViewModel(modelId: modelId, db: db))
+    init(modelId: String, db: FleetDB, lanes: Int) {
+        _vm = StateObject(wrappedValue: GraphChatViewModel(modelId: modelId, db: db, lanes: lanes))
     }
 
     var body: some View {

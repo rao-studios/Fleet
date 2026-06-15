@@ -41,15 +41,18 @@ final class GraphChatViewModel: ObservableObject {
 
     let modelId: String
     let db: FleetDB
-    let stageRunner: LoRAStageRunner
+    /// Pool of independent model lanes — concurrent members generate truly in
+    /// parallel, capped at the lane count. Each lane lazily loads its own model.
+    let executor: any StageExecuting
     let gate = EmbeddingGate()  // loads its model only when a Router uses gateKind == .embedding
     let cardSize = CGSize(width: 230, height: 150)
     private let store = GraphStore()
 
-    init(modelId: String, db: FleetDB) {
+    init(modelId: String, db: FleetDB, lanes: Int) {
         self.modelId = modelId
         self.db = db
-        self.stageRunner = LoRAStageRunner(modelId: modelId)
+        self.executor = ParallelStageExecutor(
+            lanes: (0 ..< max(1, lanes)).map { _ in LoRAStageRunner(modelId: modelId) })
 
         if let saved = store.load() {
             load(saved)
