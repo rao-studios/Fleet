@@ -9,11 +9,16 @@ import MLXLMCommon
 /// Loads the base model once, then per stage: applies the adapter
 /// (`LoRAContainer.load(into:)`), generates, and reverts it (`unload(from:)`).
 /// Adapters are used purely as adapters — `fuse(with:)` (weight merging) is never
-/// called. The `actor` serializes stages so they never race the shared model.
+/// called.
+///
+/// Generations are **serialized** (a task chain): even when the concurrent graph
+/// runner fires several members at once, only one `load → generate → unload`
+/// touches the single shared model at a time, so adapter swapping can't corrupt it.
 public actor LoRAStageRunner {
 
     private let modelId: String
     private var context: ModelContext?
+    private var tail: Task<Void, Never>?
 
     public init(modelId: String) {
         self.modelId = modelId
@@ -30,8 +35,25 @@ public actor LoRAStageRunner {
         return ctx
     }
 
-    /// Apply `adapterDirectory` (if any), generate, then revert — all on the
-    /// shared base model.
+    /// Serialize this stage behind any in-flight stage, then produce.
+    private func enqueue(
+        adapterDirectory: URL?,
+        history: [ChatTurn],
+        maxTokens: Int,
+        into continuation: AsyncThrowingStream<String, Error>.Continuation
+    ) async {
+        let previous = tail
+        let stage = Task {
+            await previous?.value
+            await self.produce(
+                adapterDirectory: adapterDirectory, history: history,
+                maxTokens: maxTokens, into: continuation)
+        }
+        tail = stage
+        await stage.value
+    }
+
+    /// Apply `adapterDirectory` (if any), generate, then revert — exclusive on the shared model.
     private func produce(
         adapterDirectory: URL?,
         history: [ChatTurn],
@@ -47,9 +69,7 @@ public actor LoRAStageRunner {
                 try container.load(into: ctx.model)  // dynamic adapter — not merged
                 adapter = container
             }
-            defer {
-                adapter?.unload(from: ctx.model)  // revert so the next stage starts clean
-            }
+            defer { adapter?.unload(from: ctx.model) }  // revert so the next stage starts clean
 
             let messages: [Chat.Message] = history.map { turn in
                 switch turn.role {
@@ -82,7 +102,7 @@ extension LoRAStageRunner: StageExecuting {
     ) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
-                await self.produce(
+                await self.enqueue(
                     adapterDirectory: adapterDirectory, history: history,
                     maxTokens: maxTokens, into: continuation)
             }

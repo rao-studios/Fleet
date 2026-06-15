@@ -29,21 +29,57 @@ public struct EnsembleGraph: Codable, Sendable, Identifiable {
         nodes.first { $0.id == id }
     }
 
-    /// Linear execution order: start at the Input node and follow outgoing edges
-    /// until none remain (v1 is a single path; a Router node enables branching later).
-    public func executionOrder() -> [GraphNode] {
-        guard let input = nodes.first(where: { $0.kind == .input }) else { return [] }
-        var order: [GraphNode] = [input]
-        var visited: Set<UUID> = [input.id]
-        var currentId = input.id
-        while let edge = edges.first(where: { $0.from == currentId }),
-            let next = node(edge.to), !visited.contains(next.id)
-        {
-            order.append(next)
-            visited.insert(next.id)
-            currentId = next.id
+    // MARK: - DAG topology
+
+    public func predecessors(_ id: UUID) -> [UUID] {
+        edges.filter { $0.to == id }.map(\.from)
+    }
+
+    public func successors(_ id: UUID) -> [UUID] {
+        edges.filter { $0.from == id }.map(\.to)
+    }
+
+    /// Kahn topological order (nodes in a cycle are dropped).
+    public func topologicalOrder() -> [GraphNode] {
+        var indegree: [UUID: Int] = [:]
+        for node in nodes { indegree[node.id] = 0 }
+        for edge in edges where indegree[edge.to] != nil {
+            indegree[edge.to, default: 0] += 1
+        }
+        var queue = nodes.filter { (indegree[$0.id] ?? 0) == 0 }
+        var order: [GraphNode] = []
+        var i = 0
+        while i < queue.count {
+            let node = queue[i]
+            i += 1
+            order.append(node)
+            for successor in successors(node.id) {
+                indegree[successor, default: 0] -= 1
+                if indegree[successor] == 0, let next = self.node(successor) {
+                    queue.append(next)
+                }
+            }
         }
         return order
+    }
+
+    /// The node whose output is the final answer: the Output node, else any node
+    /// with no successors.
+    public func terminalNode() -> GraphNode? {
+        nodes.first { $0.kind == .output } ?? nodes.first { successors($0.id).isEmpty }
+    }
+
+    /// Whether adding `from → to` would introduce a cycle (i.e. `from` is already
+    /// reachable from `to`).
+    public func wouldCreateCycle(from: UUID, to: UUID) -> Bool {
+        var stack = [to]
+        var seen: Set<UUID> = []
+        while let current = stack.popLast() {
+            if current == from { return true }
+            guard seen.insert(current).inserted else { continue }
+            stack.append(contentsOf: successors(current))
+        }
+        return false
     }
 
     // MARK: - Polymorphic Codable
@@ -79,6 +115,7 @@ struct AnyNode: Codable {
         case .input: node = try InputNode(from: decoder)
         case .lora: node = try LoRANode(from: decoder)
         case .output: node = try OutputNode(from: decoder)
+        case .router: node = try RouterNode(from: decoder)
         }
     }
 

@@ -30,7 +30,8 @@ struct GraphCanvasView: View {
                     Color.fleetBG
 
                     ZStack {
-                        wires
+                        edgeLayer
+                        liveCable
                         ForEach(vm.nodes, id: \.id) { node in
                             NodeCardView(
                                 vm: vm,
@@ -60,14 +61,22 @@ struct GraphCanvasView: View {
         .clipped()
     }
 
-    private var wires: some View {
+    /// Interactive connectors — right-click one to remove it.
+    private var edgeLayer: some View {
+        ForEach(vm.edges) { edge in
+            let path = cable(from: vm.outputPort(edge.from), to: vm.inputPort(edge.to))
+            CablePath(path: path)
+                .stroke(Color.fleetGold.opacity(0.75), lineWidth: 2)
+                .contentShape(CablePath(path: path.strokedPath(StrokeStyle(lineWidth: 16, lineCap: .round))))
+                .contextMenu {
+                    Button("Remove connection", role: .destructive) { vm.disconnect(edge) }
+                }
+        }
+    }
+
+    /// Non-interactive live cable while dragging from an output port.
+    private var liveCable: some View {
         Canvas { context, _ in
-            for edge in vm.edges {
-                context.stroke(
-                    cable(from: vm.outputPort(edge.from), to: vm.inputPort(edge.to)),
-                    with: .color(Color.fleetGold.opacity(0.75)),
-                    style: StrokeStyle(lineWidth: 2))
-            }
             if let from = wireFrom {
                 context.stroke(
                     cable(from: vm.outputPort(from), to: wireTo),
@@ -128,6 +137,12 @@ struct GraphCanvasView: View {
         }
         .buttonStyle(.plain)
     }
+}
+
+/// Wraps a prebuilt `Path` as a `Shape` so it can be stroked and given a hit area.
+private struct CablePath: Shape {
+    let path: Path
+    func path(in rect: CGRect) -> Path { path }
 }
 
 // MARK: - AppKit interaction host

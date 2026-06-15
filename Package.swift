@@ -79,6 +79,7 @@ let package = Package(
             dependencies: [
                 "FleetCore",
                 "FleetGraph",
+                .product(name: "Frigate", package: "Frigate"),
                 .product(name: "MLXLLM", package: "Frigate"),
                 .product(name: "MLXLMCommon", package: "Frigate"),
                 .product(name: "MLX", package: "Frigate"),

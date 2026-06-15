@@ -38,7 +38,13 @@ struct GraphChatView: View {
             Button {
                 vm.addLoRANode()
             } label: {
-                Label("LoRA node", systemImage: "plus")
+                Label("LoRA", systemImage: "plus")
+            }
+            .buttonStyle(.fleetQuiet)
+            Button {
+                vm.addRouterNode()
+            } label: {
+                Label("Router", systemImage: "arrow.triangle.merge")
             }
             .buttonStyle(.fleetQuiet)
         }

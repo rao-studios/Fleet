@@ -20,6 +20,9 @@ struct NodeCardView: View {
             if let lora = node as? LoRANode {
                 config(lora)
             }
+            if let router = node as? RouterNode {
+                routerConfig(router)
+            }
             ioPanels
         }
         .padding(12)
@@ -45,8 +48,15 @@ struct NodeCardView: View {
                 .font(.fleetSans(12, weight: .semibold))
                 .foregroundStyle(Color.fleetLabel)
             StatusDot(color: statusColor)
+            if let weight = vm.gateWeights[node.id] {
+                Text("w \(String(format: "%.2f", weight))")
+                    .font(.fleetMono(8))
+                    .foregroundStyle(Color.fleetGold)
+                    .padding(.horizontal, 4).padding(.vertical, 1)
+                    .background(Capsule().fill(Color.fleetGold.opacity(0.14)))
+            }
             Spacer()
-            if node.kind == .lora {
+            if node.kind == .lora || node.kind == .router {
                 Button { vm.removeNode(node.id) } label: {
                     Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
                         .foregroundStyle(Color.fleetInk.opacity(0.3))
@@ -71,30 +81,9 @@ struct NodeCardView: View {
         )
     }
 
-    // MARK: - LoRA config
-
-    private func config(_ lora: LoRANode) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Picker("", selection: vm.adapterBinding(lora)) {
-                Text("Base only").tag(UUID?.none)
-                ForEach(compatibleAdapters) { adapter in
-                    Text(adapter.name).tag(UUID?.some(adapter.id))
-                }
-            }
-            .labelsHidden()
-            .font(.fleetSans(10))
-
-            Picker("", selection: vm.operationBinding(lora)) {
-                ForEach(OperationKind.allCases) { kind in
-                    Text(NodeOperation.displayName(kind)).tag(kind)
-                }
-            }
-            .labelsHidden()
-            .font(.fleetSans(10))
-        }
-    }
-
-    private var compatibleAdapters: [TrainedAdapter] {
+    /// Adapters trained on the current base model (shown in node pickers).
+    /// The per-node config views live in `NodeCardView+LoRA.swift` / `+Router.swift`.
+    var compatibleAdapters: [TrainedAdapter] {
         appState.adapters.filter { $0.modelId == vm.modelId }
     }
 
@@ -144,6 +133,7 @@ struct NodeCardView: View {
         switch node.kind {
         case .input: return "arrow.right.circle"
         case .lora: return "cpu"
+        case .router: return "arrow.triangle.merge"
         case .output: return "checkmark.seal"
         }
     }
