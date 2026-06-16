@@ -130,12 +130,12 @@ private struct ChatSessionView: View {
             if let dataset {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
-                        ForEach(dataset.entries) { entry in
+                        ForEach(dataset.records) { record in
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(entry.kind == .qa ? "Q&A" : "NOTE")
+                                Text(record.kind == .qa ? "Q&A" : "NOTE")
                                     .font(.fleetMono(8))
-                                    .foregroundStyle(entry.kind == .qa ? Color.fleetGold : Color.fleetInk.opacity(0.4))
-                                Text(entry.summary)
+                                    .foregroundStyle(record.kind == .qa ? Color.fleetGold : Color.fleetInk.opacity(0.4))
+                                Text(record.summary)
                                     .font(.fleetSans(11))
                                     .foregroundStyle(Color.fleetInk.opacity(0.8))
                             }

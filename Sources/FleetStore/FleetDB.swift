@@ -76,6 +76,33 @@ public actor FleetDB {
         try? FileManager.default.removeItem(at: adapterDirectory(for: id))
     }
 
+    // MARK: - Royalty manifest
+
+    /// Write the royalty/attribution snapshot beside the adapter weights at
+    /// `loras/<adapterId>/training_records.json`.
+    public func saveTrainingRecords(_ manifest: TrainingRecordManifest) {
+        let directory = adapterDirectory(for: manifest.adapterId)
+        let url = directory.appendingPathComponent("training_records.json")
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            encoder.dateEncodingStrategy = .iso8601
+            try encoder.encode(manifest).write(to: url, options: .atomic)
+        } catch {
+            FilePersistence.log("training_records save failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Read back the royalty manifest for an adapter, if present.
+    public nonisolated func trainingRecords(for adapterId: UUID) -> TrainingRecordManifest? {
+        let url = adapterDirectory(for: adapterId).appendingPathComponent("training_records.json")
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try? decoder.decode(TrainingRecordManifest.self, from: data)
+    }
+
     // MARK: - Helpers
 
     private func file(_ key: String) -> FilePersistence {

@@ -4,8 +4,10 @@
   <img src="README_Assets/1.png" alt="FleetClient — the macOS fine-tune lab" width="860">
 </p>
 
-**Swift Agent Harness.** Off-load micro fine-tuning jobs onto small on-device
-LLMs, route Totem contexts into Frigates to aggregate within Seer.
+**Swift Agent Harness.** Off-load micro fine-tuning jobs onto on-device
+LLMs, route Totem contexts into Frigates to train specialized models for Seer.
+
+The macOS Client is the best experience for testing and improving Fleet's capabilities while experimenting with linguistic models. Audio and Visual support is coming in the future.
 
 Fleet is the *coordinator*. It takes contexts from many sources and media types,
 routes each one to the proper decoder, aligns everything into a single data
@@ -71,8 +73,14 @@ swift run fleet finetune --input ./mixed --output ./adapter --vision --audio
 ## The macOS app
 
 [`Client/`](Client/) (`FleetClient`) drives the whole loop interactively and is
-built to **test memory retention**: enter notes / Q&A facts, fine-tune a LoRA,
-then A/B chat the base model vs the fine-tune to see what it actually learned.
+built to test and fine-tune LoRAs,
+then A/B chat the base model vs the fine-tune to see what it actually learned. Iterating over the process to discover the right approaches to dataset curation and royalty tracking.
+
+**Datasets** — Connect a totem node to insert datasets for LoRA creation. Q/A pairs generate based on selected raw chunks of partitioned text data from the Totem directly.
+
+<p align="center">
+  <img src="README_Assets/5.png" alt="FleetClient — the fine-tune tab" width="860">
+</p>
 
 **Fine-tune** — pick a dataset and base model, set LoRA rank/iterations, and watch
 the loss converge. The adapter's UUID is tied to the dataset's UUID.

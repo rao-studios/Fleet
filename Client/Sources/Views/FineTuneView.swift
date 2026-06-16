@@ -34,17 +34,17 @@ struct FineTuneView: View {
                     }
                     row("LoRA rank") {
                         Stepper(value: $rank, in: 1 ... 64) { Text("\(rank)").font(.fleetMono(12)) }
-                            .frame(width: 120)
+                            //.frame(width: 120)
                     }
                     row("Iterations") {
                         Stepper(value: $iterations, in: 10 ... 2000, step: 10) {
                             Text("\(iterations)").font(.fleetMono(12))
                         }
-                        .frame(width: 120)
+                        //.frame(width: 120)
                     }
 
                     if let dataset {
-                        Text("Will train on \(dataset.trainingExamples.count) examples · \(dataset.entries.count) entries + \(dataset.fileFragments.count) file chunks.")
+                        Text("Will train on \(dataset.trainingExamples.count) examples from \(dataset.records.count) records.")
                             .font(.fleetSans(11))
                             .foregroundStyle(Color.fleetInk.opacity(0.5))
                     }

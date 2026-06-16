@@ -234,7 +234,7 @@ final class AppState: ObservableObject {
     func fineTune(dataset: TrainingDataset, modelId: String, rank: Int, iterations: Int) async {
         isTraining = true
         trainingError = nil
-        trainingLog = ["Building corpus from \(dataset.trainingExamples.count) examples (\(dataset.entries.count) entries + \(dataset.fileFragments.count) file chunks)…"]
+        trainingLog = ["Building corpus from \(dataset.trainingExamples.count) examples (\(dataset.records.count) records)…"]
         lastTrainedAdapterId = nil
 
         let adapter = TrainedAdapter(
@@ -264,8 +264,12 @@ final class AppState: ObservableObject {
                 }
             }
             await db.saveAdapter(adapter)
+            // Snapshot the training records + royalty attribution beside the weights.
+            let manifest = TrainingRecordManifest(adapter: adapter, dataset: dataset)
+            await db.saveTrainingRecords(manifest)
             lastTrainedAdapterId = adapter.id
             trainingLog.append("✓ Saved adapter \(adapter.id.uuidString.prefix(8)) (dataset \(dataset.id.uuidString.prefix(8)))")
+            trainingLog.append(manifest.summaryLine)
             await refresh()
         } catch {
             trainingError = "\(error)"

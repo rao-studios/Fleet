@@ -5,31 +5,36 @@ struct DatasetsView: View {
     @EnvironmentObject private var appState: AppState
     @State private var selectedId: UUID?
     @State private var draft: TrainingDataset?
+    @State private var showDatasetList = true  // auto-open: nothing is selected on launch
     @AppStorage("fleet.totemPanelShown") private var showTotem = true
 
     var body: some View {
-        HStack(spacing: 0) {
-            datasetList
-                .frame(width: 260)
-            Divider()
-            editor
-                .frame(maxWidth: .infinity)
-            if showTotem {
-                Divider()
-                TotemSourcePanel(targetDataset: draft, showPanel: $showTotem, onImport: importFragments)
-                    .frame(width: 360)
+        ZStack(alignment: .topTrailing) {
+            HStack(spacing: 0) {
+                if showTotem {
+                    TotemSourcePanel(targetDataset: draft, showPanel: $showTotem, onImport: importRecords)
+                        .frame(width: 360)
+                        .transition(.move(edge: .leading))
+                    Divider()
+                }
+                editorRegion
+                    .frame(maxWidth: .infinity)
+            }
+            if showDatasetList {
+                datasetListOverlay
                     .transition(.move(edge: .trailing))
             }
         }
         .onChange(of: selectedId) { _, id in
             draft = appState.datasets.first { $0.id == id }
+            if id == nil { withAnimation(.easeInOut(duration: 0.18)) { showDatasetList = true } }
         }
     }
 
-    /// Append Totem-imported fragments to the selected dataset and persist.
-    private func importFragments(_ fragments: [ContextFragment]) {
+    /// Append imported training records to the selected dataset and persist.
+    private func importRecords(_ records: [TrainingRecord]) {
         guard var current = draft else { return }
-        current.fileFragments.append(contentsOf: fragments)
+        current.records.append(contentsOf: records)
         draft = current
         Task { await appState.saveDataset(current) }
     }
@@ -41,26 +46,15 @@ struct DatasetsView: View {
         return appState.connectedTotems.isEmpty ? Color.fleetGold : Color.fleetGreen
     }
 
-    // MARK: - List
+    // MARK: - Dataset list (right overlay)
 
-    private var datasetList: some View {
+    private var datasetListOverlay: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 12) {
                 Text("Datasets")
                     .font(.fleetSerif(20, weight: .light, italic: true))
                     .foregroundStyle(Color.fleetLabel)
                 Spacer()
-                Button {
-                    withAnimation(.easeInOut(duration: 0.18)) { showTotem.toggle() }
-                } label: {
-                    HStack(spacing: 5) {
-                        StatusDot(color: monitorColor)
-                        Image(systemName: "point.3.connected.trianglepath.dotted")
-                            .foregroundStyle(showTotem ? Color.fleetGold : Color.fleetInk.opacity(0.55))
-                    }
-                }
-                .buttonStyle(.plain)
-                .help(showTotem ? "Hide Totem source" : "Show Totem source")
                 Button {
                     Task {
                         let dataset = await appState.createDataset(name: "Dataset \(appState.datasets.count + 1)")
@@ -71,6 +65,16 @@ struct DatasetsView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(Color.fleetGold)
+                .help("New dataset")
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) { showDatasetList = false }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.fleetSans(11, weight: .semibold))
+                        .foregroundStyle(Color.fleetInk.opacity(0.5))
+                }
+                .buttonStyle(.plain)
+                .help("Hide datasets")
             }
             .padding(14)
 
@@ -83,7 +87,11 @@ struct DatasetsView: View {
                 .padding(.horizontal, 8)
             }
         }
+        .frame(width: 300)
+        .frame(maxHeight: .infinity)
         .background(Color.fleetBG)
+        .overlay(alignment: .leading) { Divider() }
+        .shadow(color: Color.fleetInk.opacity(0.12), radius: 8, x: -2)
     }
 
     private func datasetRow(_ dataset: TrainingDataset) -> some View {
@@ -94,7 +102,7 @@ struct DatasetsView: View {
                 Text(dataset.name)
                     .font(.fleetSans(13, weight: .medium))
                     .foregroundStyle(Color.fleetInk)
-                Text("\(dataset.entries.count) entries · \(dataset.fileFragments.count) file chunks")
+                Text("\(dataset.records.count) records")
                     .font(.fleetSans(10))
                     .foregroundStyle(Color.fleetInk.opacity(0.45))
             }
@@ -112,23 +120,62 @@ struct DatasetsView: View {
         }
     }
 
-    // MARK: - Editor
+    // MARK: - Editor region (toolbar + content)
+
+    private var editorRegion: some View {
+        VStack(spacing: 0) {
+            editorToolbar
+            Divider()
+            editorContent
+        }
+        .background(Color.fleetBG)
+    }
+
+    private var editorToolbar: some View {
+        HStack(spacing: 12) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) { showTotem.toggle() }
+            } label: {
+                HStack(spacing: 5) {
+                    StatusDot(color: monitorColor)
+                    Image(systemName: "point.3.connected.trianglepath.dotted")
+                        .foregroundStyle(showTotem ? Color.fleetGold : Color.fleetInk.opacity(0.55))
+                }
+            }
+            .buttonStyle(.plain)
+            .help(showTotem ? "Hide Totem source" : "Show Totem source")
+
+            Spacer()
+
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) { showDatasetList.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "sidebar.right")
+                    Text("Datasets").font(.fleetSans(12, weight: .medium))
+                }
+                .foregroundStyle(showDatasetList ? Color.fleetGold : Color.fleetInk.opacity(0.75))
+            }
+            .buttonStyle(.plain)
+            .help(showDatasetList ? "Hide datasets" : "Show datasets")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
 
     @ViewBuilder
-    private var editor: some View {
+    private var editorContent: some View {
         if let draft {
             DatasetEditor(dataset: draft) { updated in
                 self.draft = updated
                 Task { await appState.saveDataset(updated) }
             }
-            .id("\(draft.id)#\(draft.fileFragments.count)")  // refresh chunk count after a Totem import
+            .id("\(draft.id)#\(draft.records.count)")  // refresh after an import
             .padding(24)
-            .background(Color.fleetBG)
         } else {
             EmptyHero(
                 title: "Build a dataset",
-                subtitle: "Add notes and Q&A facts to test memory recall, or import text files. Each dataset gets a UUID that its trained LoRA is tied to.")
-            .background(Color.fleetBG)
+                subtitle: "Add notes and Q&A facts to test memory recall, or import from a Totem / local files. Each dataset gets a UUID that its trained LoRA is tied to.")
         }
     }
 }
@@ -140,11 +187,13 @@ private struct DatasetEditor: View {
     @State var dataset: TrainingDataset
     let onChange: (TrainingDataset) -> Void
 
-    @State private var entryKind: DatasetEntry.Kind = .qa
+    @State private var entryKind: TrainingRecord.Kind = .qa
     @State private var noteText = ""
     @State private var question = ""
     @State private var answer = ""
-    @State private var editingChunk: ContextFragment?
+    @State private var editingRecord: TrainingRecord?
+    @State private var importing = false
+    @State private var importStatus = ""
 
     init(dataset: TrainingDataset, onChange: @escaping (TrainingDataset) -> Void) {
         _dataset = State(initialValue: dataset)
@@ -158,8 +207,8 @@ private struct DatasetEditor: View {
             contentList
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .sheet(item: $editingChunk) { fragment in
-            ChunkEditorSheet(fragment: fragment) { newText in saveChunk(fragment, text: newText) }
+        .sheet(item: $editingRecord) { record in
+            RecordEditorSheet(record: record) { updated in saveRecord(updated) }
         }
     }
 
@@ -175,11 +224,14 @@ private struct DatasetEditor: View {
                     .font(.fleetMono(9))
                     .foregroundStyle(Color.fleetInk.opacity(0.35))
                 Spacer()
+                if importing {
+                    ProgressView().scaleEffect(0.5).frame(width: 14)
+                    Text(importStatus.isEmpty ? "Importing…" : importStatus)
+                        .font(.fleetSans(10)).foregroundStyle(Color.fleetInk.opacity(0.5))
+                }
                 Button("Import files…") { importFiles() }
                     .buttonStyle(.fleetQuiet)
-                Text("\(dataset.fileFragments.count) file chunks")
-                    .font(.fleetSans(10))
-                    .foregroundStyle(Color.fleetInk.opacity(0.45))
+                    .disabled(importing)
             }
         }
     }
@@ -188,12 +240,12 @@ private struct DatasetEditor: View {
         FleetCard {
             VStack(alignment: .leading, spacing: 10) {
                 Picker("", selection: $entryKind) {
-                    Text("Q&A").tag(DatasetEntry.Kind.qa)
-                    Text("Note").tag(DatasetEntry.Kind.note)
+                    Text("Q&A").tag(TrainingRecord.Kind.qa)
+                    Text("Note").tag(TrainingRecord.Kind.note)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(width: 180)
+                // .frame(maxWidth: 180)
 
                 if entryKind == .qa {
                     TextField("Question — e.g. What is the vault code?", text: $question)
@@ -220,7 +272,7 @@ private struct DatasetEditor: View {
 
                 HStack {
                     Spacer()
-                    Button("Add entry") { addEntry() }
+                    Button("Add record") { addEntry() }
                         .buttonStyle(.fleet)
                         .disabled(!canAdd)
                 }
@@ -228,68 +280,46 @@ private struct DatasetEditor: View {
         }
     }
 
-    /// Entries and imported file chunks, in one scroll (lazy — a Totem import can
-    /// add many chunks).
+    /// All training records in one lazy scroll (an import can add many).
     private var contentList: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 8) {
-                SectionLabel("Entries (\(dataset.entries.count))")
-                ForEach(dataset.entries) { entry in entryRow(entry) }
-
-                if !dataset.fileFragments.isEmpty {
-                    SectionLabel("File chunks (\(dataset.fileFragments.count))")
-                        .padding(.top, 10)
-                    ForEach(dataset.fileFragments) { fragment in chunkRow(fragment) }
-                }
+                SectionLabel("Records (\(dataset.records.count))")
+                ForEach(dataset.records) { record in recordRow(record) }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    private func entryRow(_ entry: DatasetEntry) -> some View {
+    private func recordRow(_ record: TrainingRecord) -> some View {
         HStack(alignment: .top, spacing: 10) {
-            Text(entry.kind == .qa ? "Q&A" : "NOTE")
+            Text(record.kind == .qa ? "Q&A" : "NOTE")
                 .font(.fleetMono(8.5))
-                .foregroundStyle(entry.kind == .qa ? Color.fleetGold : Color.fleetInk.opacity(0.5))
-                .frame(width: 44, alignment: .leading)
-            Text(entry.summary)
-                .font(.fleetSans(12))
-                .foregroundStyle(Color.fleetInk.opacity(0.85))
-                .frame(maxWidth: .infinity, alignment: .leading)
-            removeButton { dataset.entries.removeAll { $0.id == entry.id }; onChange(dataset) }
-        }
-        .padding(10)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.fleetCard))
-    }
-
-    private func chunkRow(_ fragment: ContextFragment) -> some View {
-        let isTotem = fragment.metadata?["source"] == "totem"
-        return HStack(alignment: .top, spacing: 10) {
-            Text(isTotem ? "TOTEM" : "FILE")
-                .font(.fleetMono(8.5))
-                .foregroundStyle(isTotem ? Color.fleetGold : Color.fleetInk.opacity(0.5))
+                .foregroundStyle(record.kind == .qa ? Color.fleetGold : Color.fleetInk.opacity(0.5))
                 .frame(width: 44, alignment: .leading)
             VStack(alignment: .leading, spacing: 3) {
-                Text(fragment.text)
+                Text(record.summary)
                     .font(.fleetSans(12))
                     .foregroundStyle(Color.fleetInk.opacity(0.85))
-                    .lineLimit(4)
+                    .lineLimit(3)
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Text(chunkSource(fragment))
-                    .font(.fleetMono(8))
-                    .foregroundStyle(Color.fleetInk.opacity(0.4))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                if let src = recordSource(record) {
+                    Text(src)
+                        .font(.fleetMono(8))
+                        .foregroundStyle(Color.fleetInk.opacity(0.4))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
             }
             .contentShape(Rectangle())
-            .onTapGesture { editingChunk = fragment }  // tap the preview to open full view/edit
+            .onTapGesture { editingRecord = record }
             VStack(spacing: 8) {
-                iconButton("arrow.up.left.and.arrow.down.right", help: "View / edit full chunk") {
-                    editingChunk = fragment
+                iconButton("arrow.up.left.and.arrow.down.right", help: "View / edit record") {
+                    editingRecord = record
                 }
-                iconButton("xmark.circle.fill", help: "Remove chunk", tint: Color.fleetInk.opacity(0.25)) {
-                    dataset.fileFragments.removeAll { $0.id == fragment.id }; onChange(dataset)
+                iconButton("xmark.circle.fill", help: "Remove record", tint: Color.fleetInk.opacity(0.25)) {
+                    dataset.records.removeAll { $0.id == record.id }; onChange(dataset)
                 }
             }
         }
@@ -297,15 +327,20 @@ private struct DatasetEditor: View {
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.fleetCard))
     }
 
-    /// Apply an edit made in the full-chunk sheet and persist via `onChange`.
-    private func saveChunk(_ fragment: ContextFragment, text: String) {
-        guard let idx = dataset.fileFragments.firstIndex(where: { $0.id == fragment.id }) else { return }
-        dataset.fileFragments[idx].text = text
-        onChange(dataset)
+    /// Provenance line for an imported record (origin + owner/source, generated badge).
+    private func recordSource(_ record: TrainingRecord) -> String? {
+        guard let p = record.provenance, p.origin != .manual else { return nil }
+        var bits: [String] = [p.origin == .totem ? "totem" : "file"]
+        if let owner = p.ownerId, !owner.isEmpty { bits.append("owner \(owner)") }
+        else if let label = p.sourceLabel, !label.isEmpty { bits.append(label) }
+        if record.generation?.generated == true { bits.append("generated") }
+        return bits.joined(separator: " · ")
     }
 
-    private func removeButton(_ action: @escaping () -> Void) -> some View {
-        iconButton("xmark.circle.fill", help: "Remove", tint: Color.fleetInk.opacity(0.25), action: action)
+    private func saveRecord(_ updated: TrainingRecord) {
+        guard let idx = dataset.records.firstIndex(where: { $0.id == updated.id }) else { return }
+        dataset.records[idx] = updated
+        onChange(dataset)
     }
 
     private func iconButton(
@@ -317,15 +352,6 @@ private struct DatasetEditor: View {
         }
         .buttonStyle(.plain)
         .help(help)
-    }
-
-    /// Short provenance line for a file chunk (Totem doc id, or file name) + size.
-    private func chunkSource(_ fragment: ContextFragment) -> String {
-        let size = "\(fragment.text.count) chars"
-        if let docId = fragment.metadata?["documentId"], !docId.isEmpty {
-            return "doc \(docId.prefix(8)) · \(size)"
-        }
-        return "\(fragment.source.lastPathComponent) · \(size)"
     }
 
     private var canAdd: Bool {
@@ -341,82 +367,143 @@ private struct DatasetEditor: View {
     private func addEntry() {
         switch entryKind {
         case .qa:
-            dataset.entries.append(.qa(question: question, answer: answer))
+            dataset.records.append(.qa(question: question, answer: answer, provenance: .manual))
             question = ""; answer = ""
         case .note:
-            dataset.entries.append(.note(noteText))
+            dataset.records.append(.note(noteText, provenance: .manual))
             noteText = ""
         }
         onChange(dataset)
     }
 
+    /// Decode local files, then generate a Q&A record per chunk (each file = a document).
     private func importFiles() {
         let urls = FilePicker.pickFiles()
         guard !urls.isEmpty else { return }
+        importing = true; importStatus = "Decoding…"
         Task {
             let fragments = await appState.decodeFiles(urls)
-            dataset.fileFragments.append(contentsOf: fragments)
-            onChange(dataset)
+            let records = await RecordImport.fileRecords(
+                fragments: fragments, modelId: appState.activeModelId
+            ) { done, total in
+                Task { @MainActor in importStatus = "Generating \(done)/\(total)…" }
+            }
+            await MainActor.run {
+                dataset.records.append(contentsOf: records)
+                onChange(dataset)
+                importing = false; importStatus = ""
+            }
         }
     }
 }
 
-// MARK: - ChunkEditorSheet
+// MARK: - RecordEditorSheet
 
-/// Full-screen-ish view of one file chunk's text, made editable. Save commits the
-/// edited text back to the dataset via the caller's closure.
-private struct ChunkEditorSheet: View {
-    let fragment: ContextFragment
-    let onSave: (String) -> Void
+/// Full view of one training record, made editable (question + answer, or note).
+/// Provenance and generation are shown read-only. Save commits the edit back.
+private struct RecordEditorSheet: View {
+    let record: TrainingRecord
+    let onSave: (TrainingRecord) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var text: String
+    @State private var question: String
+    @State private var answer: String
+    @State private var note: String
 
-    init(fragment: ContextFragment, onSave: @escaping (String) -> Void) {
-        self.fragment = fragment
+    init(record: TrainingRecord, onSave: @escaping (TrainingRecord) -> Void) {
+        self.record = record
         self.onSave = onSave
-        _text = State(initialValue: fragment.text)
+        _question = State(initialValue: record.question ?? "")
+        _answer = State(initialValue: record.answer ?? "")
+        _note = State(initialValue: record.note ?? "")
     }
-
-    private var isTotem: Bool { fragment.metadata?["source"] == "totem" }
-    private var dirty: Bool { text != fragment.text }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                Text(isTotem ? "TOTEM" : "FILE")
+                Text(record.kind == .qa ? "Q&A" : "NOTE")
                     .font(.fleetMono(9))
-                    .foregroundStyle(isTotem ? Color.fleetGold : Color.fleetInk.opacity(0.5))
-                Text("Edit chunk")
+                    .foregroundStyle(record.kind == .qa ? Color.fleetGold : Color.fleetInk.opacity(0.5))
+                Text("Edit record")
                     .font(.fleetSerif(20, weight: .light, italic: true))
                     .foregroundStyle(Color.fleetLabel)
                 Spacer()
-                Text("\(text.count) chars")
-                    .font(.fleetMono(9)).foregroundStyle(Color.fleetInk.opacity(0.45))
+                if record.generation?.generated == true {
+                    Text("generated")
+                        .font(.fleetMono(8.5)).foregroundStyle(Color.fleetGold)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(RoundedRectangle(cornerRadius: 5).fill(Color.fleetGold.opacity(0.12)))
+                }
             }
-            Text(fragment.source.absoluteString)
-                .font(.fleetMono(9)).foregroundStyle(Color.fleetInk.opacity(0.4))
-                .lineLimit(1).truncationMode(.middle)
+            if let provenance = provenanceLine {
+                Text(provenance)
+                    .font(.fleetMono(9)).foregroundStyle(Color.fleetInk.opacity(0.45))
+                    .lineLimit(1).truncationMode(.middle)
+            }
 
-            TextEditor(text: $text)
-                .font(.fleetSans(13))
-                .foregroundStyle(Color.fleetLabel)
-                .scrollContentBackground(.hidden)
-                .padding(10)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.fleetFill))
-                .frame(minHeight: 260)
+            if record.kind == .qa {
+                SectionLabel("Question")
+                editorField($question, minHeight: 70)
+                SectionLabel("Answer")
+                editorField($answer, minHeight: 200)
+            } else {
+                SectionLabel("Note")
+                editorField($note, minHeight: 280)
+            }
 
             HStack {
                 Button("Cancel") { dismiss() }.buttonStyle(.fleetQuiet)
                 Spacer()
-                Button("Save") { onSave(text); dismiss() }
+                Button("Save") { onSave(updatedRecord()); dismiss() }
                     .buttonStyle(.fleet)
-                    .disabled(!dirty || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(!canSave)
             }
         }
         .padding(20)
-        .frame(width: 580, height: 480)
+        .frame(width: 580, height: 520)
         .background(Color.fleetBG)
         .preferredColorScheme(.light)
+    }
+
+    private func editorField(_ text: Binding<String>, minHeight: CGFloat) -> some View {
+        TextEditor(text: text)
+            .font(.fleetSans(13))
+            .foregroundStyle(Color.fleetLabel)
+            .scrollContentBackground(.hidden)
+            .padding(10)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.fleetFill))
+            .frame(minHeight: minHeight)
+    }
+
+    private var provenanceLine: String? {
+        guard let p = record.provenance, p.origin != .manual else { return nil }
+        var bits: [String] = [p.origin == .totem ? "totem" : "file"]
+        if let owner = p.ownerId, !owner.isEmpty { bits.append("owner \(owner)") }
+        if let doc = p.documentId, !doc.isEmpty { bits.append("doc \(doc)") }
+        if !p.partitionIds.isEmpty { bits.append("\(p.partitionIds.count) partition(s)") }
+        return bits.joined(separator: " · ")
+    }
+
+    private var canSave: Bool {
+        switch record.kind {
+        case .qa:
+            return !question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && !answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .note:
+            return !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    /// Preserve id/provenance/generation; swap only the edited text fields.
+    private func updatedRecord() -> TrainingRecord {
+        var updated = record
+        switch record.kind {
+        case .qa:
+            updated.question = question
+            updated.answer = answer
+        case .note:
+            updated.note = note
+        }
+        return updated
     }
 }

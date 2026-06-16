@@ -13,7 +13,7 @@ struct TotemSourcePanel: View {
     let targetDataset: TrainingDataset?
     /// Drives the column's collapse from the panel's own header chevron.
     @Binding var showPanel: Bool
-    let onImport: ([ContextFragment]) -> Void
+    let onImport: ([TrainingRecord]) -> Void
 
     private enum Mode: String, CaseIterable, Identifiable {
         case browse = "Browse"
@@ -31,7 +31,7 @@ struct TotemSourcePanel: View {
     @State private var searchQuery = ""
     @State private var searchResults: [TotemPartition] = []
     @State private var selected: [String: TotemPartition] = [:]
-    @State private var cleanWithModel = false
+    @State private var importKind: RecordImport.Kind = .qa
     @State private var status = ""
     @State private var busy = false
 
@@ -77,7 +77,7 @@ struct TotemSourcePanel: View {
             Button {
                 showPanel = false
             } label: {
-                Image(systemName: "chevron.right")
+                Image(systemName: "chevron.left")
                     .font(.fleetSans(11, weight: .semibold))
                     .foregroundStyle(Color.fleetInk.opacity(0.5))
             }
@@ -329,10 +329,15 @@ struct TotemSourcePanel: View {
                         .font(.fleetSans(10)).foregroundStyle(Color.fleetInk.opacity(0.4))
                 }
                 Spacer()
-                Toggle("clean with model", isOn: $cleanWithModel)
-                    .font(.fleetSans(10)).foregroundStyle(Color.fleetInk.opacity(0.7))
-                    .toggleStyle(.checkbox)
+                Picker("", selection: $importKind) {
+                    ForEach(RecordImport.Kind.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented).labelsHidden().frame(width: 130)
             }
+            Text(importKind == .qa
+                 ? "Q&A — generate a question per chunk (answer = the chunk)."
+                 : "Note — import the raw chunk as a note.")
+                .font(.fleetSans(9)).foregroundStyle(Color.fleetInk.opacity(0.4))
             Button(addLabel) { addToDataset() }
                 .buttonStyle(.fleet)
                 .frame(maxWidth: .infinity)
@@ -415,41 +420,39 @@ struct TotemSourcePanel: View {
     }
 
     private func addToDataset() {
+        guard let totemId = selectedTotemId else { return }
         let partitions = Array(selected.values)
         guard !partitions.isEmpty else { return }
+        let kind = importKind
+        // Context for Q&A is built from partitions already loaded here — no refetch.
+        let contextPartitions = loadedPartitions()
         busy = true
+        status = kind == .qa ? "Generating Q&A…" : "Importing…"
         Task {
-            var fragments = TotemImporter.fragments(from: partitions)
-            if cleanWithModel { fragments = await cleaned(fragments) }
+            let records = await RecordImport.totemRecords(
+                partitions: partitions, contextPartitions: contextPartitions, kind: kind,
+                totemId: totemId, ownerId: ownerId, modelId: appState.activeModelId
+            ) { done, total in
+                Task { @MainActor in status = "\(kind == .qa ? "Generating" : "Importing") \(done)/\(total)…" }
+            }
             await MainActor.run {
-                onImport(fragments)
-                status = "Added \(fragments.count) to \(targetDataset?.name ?? "dataset")"
+                onImport(records)
+                status = "Added \(records.count) to \(targetDataset?.name ?? "dataset")"
                 selected = [:]  // keep the panel open for the next import
                 busy = false
             }
         }
     }
 
-    /// Optional LLM cleanup: rewrite each fragment via the active model.
-    private func cleaned(_ fragments: [ContextFragment]) async -> [ContextFragment] {
-        let session = ChatSession(modelId: appState.activeModelId, adapterDirectory: nil)
-        var result: [ContextFragment] = []
-        for fragment in fragments {
-            let prompt = "Rewrite the following into one clean, self-contained training example. "
-                + "Output only the cleaned text, no commentary:\n\n\(fragment.text)"
-            var text = ""
-            do {
-                for try await chunk in await session.reply(
-                    history: [ChatTurn(role: .user, text: prompt)], maxTokens: 400)
-                {
-                    text += chunk
-                }
-            } catch { text = "" }
-            var cleaned = fragment
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            cleaned.text = trimmed.isEmpty ? fragment.text : trimmed
-            result.append(cleaned)
+    /// Every partition currently loaded in the panel (browsed groups + search
+    /// results), deduped — the document context source for Q&A generation.
+    private func loadedPartitions() -> [TotemPartition] {
+        var seen = Set<String>()
+        var pool: [TotemPartition] = []
+        for parts in groupPartitions.values {
+            for p in parts where seen.insert(p.id).inserted { pool.append(p) }
         }
-        return result
+        for p in searchResults where seen.insert(p.id).inserted { pool.append(p) }
+        return pool
     }
 }

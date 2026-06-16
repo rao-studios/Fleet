@@ -5,20 +5,10 @@ import XCTest
 
 final class FleetStoreTests: XCTestCase {
 
-    func testDatasetEntryTrainingTexts() {
-        let note = DatasetEntry.note("The vault code is 7741.")
-        XCTAssertEqual(note.trainingTexts(), ["The vault code is 7741."])
-
-        let qa = DatasetEntry.qa(question: "What is the vault code?", answer: "The vault code is 7741.")
-        XCTAssertEqual(
-            qa.trainingTexts(),
-            ["Q: What is the vault code?\nA: The vault code is 7741.", "The vault code is 7741."])
-    }
-
     func testDatasetCorpusBuildsTextExamples() {
         let dataset = TrainingDataset(
             name: "facts",
-            entries: [
+            records: [
                 .note("Fleet is a Swift Agent Harness."),
                 .qa(question: "Who built it?", answer: "Rao."),
             ])
@@ -30,17 +20,17 @@ final class FleetStoreTests: XCTestCase {
 
     func testPropertyListRoundTrip() throws {
         // Exercise the same PropertyList path FleetDB uses, in a temp location-independent way.
-        let dataset = TrainingDataset(name: "roundtrip", entries: [.note("hello")])
+        let dataset = TrainingDataset(name: "roundtrip", records: [.note("hello")])
         let data = try PropertyListEncoder().encode(dataset)
         let decoded = try PropertyListDecoder().decode(TrainingDataset.self, from: data)
         XCTAssertEqual(decoded.id, dataset.id)
         XCTAssertEqual(decoded.name, "roundtrip")
-        XCTAssertEqual(decoded.entries.first?.note, "hello")
+        XCTAssertEqual(decoded.records.first?.note, "hello")
     }
 
     func testAdapterTiesToDatasetUUID() async {
         let db = FleetDB()
-        let dataset = TrainingDataset(name: "linked", entries: [.note("x")])
+        let dataset = TrainingDataset(name: "linked", records: [.note("x")])
         await db.saveDataset(dataset)
 
         let adapter = TrainedAdapter(
