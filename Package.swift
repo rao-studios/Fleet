@@ -94,7 +94,7 @@ let package = Package(
                 .product(name: "MLXLLM", package: "Frigate"),
                 .product(name: "MLXLMCommon", package: "Frigate"),
                 .product(name: "MLX", package: "Frigate"),
-                .product(name: "Tokenizers", package: "Frigate"),
+                .product(name: "FrigateTokenizers", package: "Frigate"),
             ],
             swiftSettings: v5
         ),
@@ -106,7 +106,7 @@ let package = Package(
                 .product(name: "MLXLMCommon", package: "Frigate"),
                 .product(name: "MLXOptimizers", package: "Frigate"),
                 .product(name: "MLX", package: "Frigate"),
-                .product(name: "Tokenizers", package: "Frigate"),
+                .product(name: "FrigateTokenizers", package: "Frigate"),
             ],
             swiftSettings: v5
         ),
