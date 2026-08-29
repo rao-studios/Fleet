@@ -32,7 +32,7 @@ public struct TotemGroupPage: Sendable {
     public var nextAfterId: String { groups.last?.id ?? "" }
 }
 
-/// A single partition (the content unit) pulled from a Totem — the fine-tuning material.
+/// A search hit from a Totem: one partition of a document, with its score.
 public struct TotemPartition: Sendable, Identifiable {
     public let id: String
     public let documentId: String
@@ -41,10 +41,39 @@ public struct TotemPartition: Sendable, Identifiable {
     public var score: Float?
 }
 
-/// Pulls a connected Totem's catalog and content over the session stream and
-/// turns selected partitions into `ContextFragment`s. Wraps Conduit's
-/// `TotemQueryClient`; callers pass a `totemId` and work in the value types above,
-/// never raw proto / `TotemNode`.
+/// A document's full content, as Conduit's documents API returns it.
+///
+/// `texts` holds the document's partitions in stored order. The API carries no
+/// per-partition ids, so position within this array is the stable address —
+/// which is what ``FleetCore/SourceProvenance/textIndices`` records.
+public struct TotemDocument: Sendable, Identifiable {
+    public let id: String
+    public let name: String
+    public let ownerId: String
+    public let groupId: String
+    public let groupLabel: String
+    public let createdAt: Date
+    public let texts: [String]
+    public let mediaType: String
+
+    /// The document's partitions joined back into one body.
+    public var body: String {
+        texts.joined(separator: "\n\n")
+    }
+}
+
+/// The result of a document fetch, including what the Totem declined to return.
+public struct TotemDocumentFetch: Sendable {
+    public let documents: [TotemDocument]
+    /// Ids that were requested but not returned — the Totem skips documents the
+    /// caller may not read rather than failing the whole request, so the count
+    /// difference is the only signal that something was withheld.
+    public let inaccessibleIds: [String]
+}
+
+/// Pulls a connected Totem's catalog and content over the session stream. Wraps
+/// Conduit's `TotemQueryClient`; callers pass a `totemId` and work in the value
+/// types above, never raw proto / `TotemNode`.
 public struct TotemImporter: Sendable {
 
     private let client: TotemQueryClient
@@ -86,25 +115,36 @@ public struct TotemImporter: Sendable {
         return TotemGroupPage(groups: groups, hasMore: response.hasMore_p)
     }
 
-    /// Partitions (with text) for the given documents — via the HNSW graph, whose
-    /// nodes carry the partition content.
-    public func partitions(
+    /// Full content for the given documents.
+    ///
+    /// This replaces the old HNSW-graph fetch, which was retired along with that
+    /// engine. Documents the owner may not read are silently omitted by the
+    /// Totem, so the difference is reported rather than left invisible.
+    public func documents(
         totemId: UUID, ownerId: String, documentIds: [String]
-    ) async throws -> [TotemPartition] {
-        var request = Totem_V1_TotemHNSWGraphRequest()
+    ) async throws -> TotemDocumentFetch {
+        var request = Totem_V1_TotemDocumentsRequest()
         request.ownerID = ownerId
-        request.scope = "documents"
-        request.shardIndex = -1
         request.documentIds = documentIds
 
-        let response = try await client.hnswGraph(request, totem: node(totemId))
-        return response.nodes
-            .filter { !$0.isDeleted && !$0.text.isEmpty }
-            .map {
-                TotemPartition(
-                    id: $0.partitionID, documentId: $0.documentID,
-                    ownerId: $0.documentOwnerID, text: $0.text, score: nil)
-            }
+        let response = try await client.documents(request, totem: node(totemId))
+        let documents = response.documents.map { document in
+            TotemDocument(
+                id: document.id,
+                name: document.name,
+                ownerId: document.ownerID,
+                groupId: document.groupID,
+                groupLabel: document.groupLabel,
+                createdAt: Date(timeIntervalSince1970: TimeInterval(document.createdAt)),
+                texts: document.texts,
+                mediaType: document.mediaType
+            )
+        }
+        let returned = Set(documents.map(\.id))
+        return TotemDocumentFetch(
+            documents: documents,
+            inaccessibleIds: documentIds.filter { !returned.contains($0) }
+        )
     }
 
     /// Search the Totem and return matching partitions (with scores).
@@ -125,23 +165,24 @@ public struct TotemImporter: Sendable {
         }
     }
 
-    /// Mechanical organize: chunk to training size and dedupe → `ContextFragment`s.
-    /// Pure (no network) — `static` so it's reusable and unit-testable on its own.
-    public static func fragments(from partitions: [TotemPartition], maxChars: Int = 2000) -> [ContextFragment] {
-        var seen = Set<String>()
-        var fragments: [ContextFragment] = []
-        for partition in partitions {
-            let source = URL(string: "totem://partition/\(partition.id)")
-                ?? URL(fileURLWithPath: "/totem/\(partition.id)")
-            for (index, chunk) in TextChunker.chunk(partition.text, maxChars: maxChars).enumerated() {
-                let key = chunk.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !key.isEmpty, seen.insert(key).inserted else { continue }
-                fragments.append(
-                    ContextFragment(
-                        id: "\(partition.id)#\(index)", source: source, mediaType: .text,
-                        text: chunk, metadata: ["source": "totem", "documentId": partition.documentId]))
-            }
-        }
-        return fragments
+    /// Provenance for material taken from a Totem document.
+    ///
+    /// Pure (no network) so it can be unit-tested on its own. `textIndices`
+    /// records which partitions of the document were used, which is the addressing
+    /// the documents API leaves us with now that partition ids are gone.
+    public static func provenance(
+        for document: TotemDocument,
+        totemId: UUID,
+        textIndices: [Int]
+    ) -> SourceProvenance {
+        SourceProvenance(
+            origin: .totem,
+            ownerId: document.ownerId,
+            totemId: totemId.uuidString,
+            documentId: document.id,
+            groupId: document.groupId,
+            textIndices: textIndices,
+            sourceLabel: document.name
+        )
     }
 }

@@ -1,14 +1,15 @@
 // Fleet umbrella module.
 //
-// Importing `Fleet` brings the whole harness into scope: the core data structure
-// and coordination protocols, the media decoders, the image/audio backends, and
-// the fine-tuning orchestration.
+// Importing `Fleet` brings the whole service into scope: the JSON/schema/gate
+// core, the content-addressed store, training and gated inference, the
+// orchestration facade, and the task deployment experiment.
+//
+// FleetConduit is deliberately not re-exported — it pulls in gRPC, and only the
+// app and the Totem integration need it.
 
-@_exported import FleetAudio
 @_exported import FleetCore
-@_exported import FleetGraph
 @_exported import FleetInference
-@_exported import FleetMedia
+@_exported import FleetService
 @_exported import FleetStore
+@_exported import FleetTasks
 @_exported import FleetTraining
-@_exported import FleetVision

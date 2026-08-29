@@ -1,159 +1,161 @@
 # Fleet
 
-<p align="center">
-  <img src="README_Assets/1.png" alt="FleetClient — the macOS fine-tune lab" width="860">
-</p>
+**LoRA-gated JSON state machines.** Fleet trains LoRA adapters on small on-device
+LLMs so their output *always* conforms to a fixed schema of semantic keys, and
+enforces that schema token by token while decoding.
 
-**Swift Agent Harness.** Off-load micro fine-tuning jobs onto on-device
-LLMs, route Totem contexts into Frigates to train specialized models for Seer.
+Give Fleet N input JSON documents and N output JSON documents paired by index. It
+reads the key template out of the outputs — keys, nesting, and value types, with
+the values ignored — trains a LoRA to produce the right values for those keys, and
+then constrains generation so the structure cannot come out wrong. Structure comes
+from the schema; values come from the LoRA.
 
-The macOS Client is the best experience for testing and improving Fleet's capabilities while experimenting with linguistic models. Audio and Visual support is coming in the future.
+Fleet never reimplements training, model loading, or inference. It drives
+[Frigate](https://github.com/rao-studios/Frigate)'s MLX/GPU machinery.
 
-Fleet is the *coordinator*. It takes contexts from many sources and media types,
-routes each one to the proper decoder, aligns everything into a single data
-structure, and hands that to a LoRA fine-tuning job executed by
-[Frigate](https://github.com/rao-studios/Frigate) — the MLX/GPU engine. Fleet never reimplements training,
-model loading, or inference; it drives Frigate's existing machinery.
-
-## The demo: folder → fine-tune
-
-Point Fleet at a folder of mixed media and it will fine-tune a small LLM from it:
+## Try it in one command
 
 ```bash
 swift build
-./build-metallib.sh            # macOS: compile MLX Metal shaders (one time per build)
+./build-metallib.sh     # macOS: compile MLX Metal shaders (once per build)
 
-swift run fleet finetune \
-  --input ./my-notes \
-  --output ./adapter \
-  --iterations 200 --rank 8
+swift run fleet smoke
+```
+
+`smoke` generates a deterministic mock dataset, trains a LoRA on it, then runs a
+held-out input through the gate and checks the output against the schema:
+
+```
+1. Generating 16 Weather report pairs (seed 42)…
+Schema: {"advisories":[string],"avg_temp_c":number,"storm_risk":boolean,"summary":string}
+Content id: 525db6b2ce92d9dcee3252082b211e2736ff03363b3fb440a91f3186e0e56bb0
+
+2. Training 30 iterations…
+  iter 9  loss 1.9557
+  iter 29 loss 0.6809
+
+3. Testing the gate on a held-out input…
+  input:    {"city":"Tromso","readings":[17.53,22.77,12.66,16.61,13.37],"wind_kph":31.78}
+  produced: {"advisories":[],"avg_temp_c":13.11,"storm_risk":false,"summary":"Cold in Tromso"}
+
+✓ Output matched the schema. 54% of tokens were forced.
 ```
 
 > **macOS note:** Frigate's MLX GPU backend loads compiled Metal shaders at
-> runtime. Run `./build-metallib.sh` once after `swift build` to place
-> `mlx.metallib` next to the binary, otherwise MLX fails with *"Failed to load
-> the default metallib"*.
+> runtime. Run `./build-metallib.sh` once after `swift build`, otherwise MLX fails
+> with *"Failed to load the default metallib"*.
 
-This is the **core highway and coordination pattern**:
+## How the gate works
 
-1. **Enumerate** — `FolderContextProvider` walks the directory.
-2. **Route** — `DecoderRegistry` sends each file to the decoder that claims its
-   extension (the coordination step).
-3. **Decode & chunk** — each decoder emits `ContextFragment`s; long text is split
-   into training-sized chunks.
-4. **Align** — every fragment collects into one `Corpus` (the single unified
-   structure, shaped to echo a Totem partition).
-5. **Format** — `DatasetFormatter` builds shuffled train/validation `[String]`
-   arrays (and writes `train.jsonl` / `valid.jsonl` for inspection).
-6. **Fine-tune** — `FleetTrainer` loads the base model through Frigate, attaches
-   LoRA, and runs Frigate's `LoRATrain.train`.
-7. **Package** — the adapter is written to the output directory as
-   `adapter_config.json` + `adapters.safetensors`, reloadable via
-   `LoRAContainer.from(directory:)`.
+The schema compiles into a character-level state machine, and every decoding step
+consults it:
 
-## Supported media
+- **Structural positions** — braces, quoted keys, colons, commas — are *forced*.
+  The model is not consulted at all; Fleet emits the longest token matching the
+  literal text. A model that has never seen your schema still cannot misspell a key.
+- **Value positions** are *masked*. The model chooses, but only from tokens whose
+  every character keeps the machine alive: string bodies with proper escaping,
+  JSON number grammar (no `01`, no `1.`), `true`/`false`, and arrays whose length
+  the model decides but whose element type it cannot change.
+- A token is admissible when **all** of its characters are, so a token like `",`
+  that closes a string and opens the next key works naturally.
 
-| Decoder | Extensions | Notes |
-|---|---|---|
-| Plain text | `txt`, `text`, `log`, `rst`, `org`, `tex` | Foundation only |
-| Markdown | `md`, `markdown`, `mdown`, `mkd`, `mdx` | split on headings |
-| Code | `swift`, `py`, `js`, `ts`, `go`, `rs`, `java`, `c`, `cpp`, … | fenced w/ language |
-| JSON / JSONL | `json`, `jsonl`, `ndjson` | one fragment per JSONL line |
-| CSV / TSV | `csv`, `tsv` | rows flattened to `column: value` |
-| PDF | `pdf` | **Apple only** (PDFKit) |
-| Image | `png`, `jpg`, `heic`, `gif`, … | caption via VLM — **Apple only**, opt-in `--vision` |
-| Audio | `wav`, `mp3`, `m4a`, `flac`, … | transcribe via Apple Speech — **Apple only**, opt-in `--audio` |
+Generation ends when the machine accepts. The output parses by construction.
 
-Enable the inference-backed decoders explicitly:
+Schema extraction is strict on purpose: every output must have the identical key
+structure and value types. Array *lengths* may vary; nothing else may. A
+union-with-optionals schema would make the decoder guess which keys are present,
+which is exactly what a fixed state machine is meant to eliminate.
 
-```bash
-swift run fleet finetune --input ./mixed --output ./adapter --vision --audio
+## Content-addressed LoRAs
+
+A LoRA's id is the SHA256 of its **training inputs only** — never the outputs:
+
 ```
+fleet-db/
+  registry                 the index: LoRAs, groups, datasets
+  datasets/<uuid>          the input/output pairs
+  loras/<cid>/             adapters.safetensors, adapter_config.json,
+                           schema.json, dataset-snapshot.json, manifest.json
+```
+
+So when the same questions get new answers because the world moved on, retraining
+lands on the same id and **replaces the adapter in place**, keeping its label,
+its groups, and its birthday, and bumping its generation. That is the groundwork
+for on-demand LoRAs addressable by the inputs a caller already has. The dataset
+snapshot beside the weights records which outputs that generation actually learned.
 
 ## The macOS app
 
-[`Client/`](Client/) (`FleetClient`) drives the whole loop interactively and is
-built to test and fine-tune LoRAs,
-then A/B chat the base model vs the fine-tune to see what it actually learned. Iterating over the process to discover the right approaches to dataset curation and royalty tracking.
+[`Client/`](Client/) (`FleetClient`) drives the whole loop, with a debugger at
+every step.
 
-**Datasets** — Connect a totem node to insert datasets for LoRA creation. Q/A pairs generate based on selected raw chunks of partitioned text data from the Totem directly.
+- **Datasets** — generate deterministic mock data (three built-in domains) or
+  import a folder of inputs and a folder of matching outputs. The schema debugger
+  shows the extracted key tree and, when outputs disagree, points at the exact
+  offender: `output[7] $.warnings[2]: expected number (from output 0), found string`.
+- **Train** — pick a dataset, model, and knobs. Before starting it tells you which
+  content id you are about to create *or replace*, then streams the loss curve.
+- **Library** — every stored LoRA with its generation, schema, labels, and groups.
+- **Playground** — run an input and inspect the **gate trace**: each token colored
+  by whether the schema forced it or the LoRA chose it, click one to see where in
+  the schema it landed, how many tokens were admissible, and what the model ranked
+  highest.
+- **Totem sources** — browse documents on connected Totems (Fleet hosts the
+  Conduit gRPC server; Totems dial in).
 
-<p align="center">
-  <img src="README_Assets/5.png" alt="FleetClient — the fine-tune tab" width="860">
-</p>
+## CLI
 
-**Fine-tune** — pick a dataset and base model, set LoRA rank/iterations, and watch
-the loss converge. The adapter's UUID is tied to the dataset's UUID.
+```bash
+fleet dataset mock --domain orderTriage --count 40 --seed 42
+fleet dataset import --inputs ./in --outputs ./out
+fleet dataset validate <dataset-id>      # schema preview + every disagreement
+fleet train <dataset-id> --iterations 200 --rank 8
+fleet test --cid <cid> --input ./case.json --trace
+fleet loras list | label | delete
+fleet groups create | list
+```
 
-<p align="center">
-  <img src="README_Assets/2.png" alt="FleetClient — the fine-tune tab" width="860">
-</p>
-
-**Chat** — the same prompt answered by the base model and the fine-tuned LoRA side
-by side, with the source dataset shown for recall comparison.
-
-<p align="center">
-  <img src="README_Assets/3.png" alt="FleetClient — A/B chat comparing base vs fine-tuned recall" width="860">
-</p>
-
-**Ensemble** — chain and customize LoRA interactions from input to output to test how linguistics and fine-tunes impact each other.
-
-<p align="center">
-  <img src="README_Assets/4.png" alt="FleetClient — A/B chat comparing base vs fine-tuned recall" width="860">
-</p>
-
-## Architecture (one package, several library targets)
+## Architecture
 
 | Target | Role | Heavy deps |
 |---|---|---|
-| `FleetCore` | unified data structure (`ContextFragment`, `Corpus`) + coordination protocols (`MediaDecoder`, `DecoderRegistry`, `ContextProvider`) + `TextChunker` + `DatasetFormatter` | none (Foundation) |
-| `FleetMedia` | concrete text/markdown/code/json/csv/pdf decoders + image/audio decoders (inference via injected closures) + the standard registry | none (Foundation) |
-| `FleetAudio` | `AudioTranscriber` protocol + Apple `SpeechTranscriber` | Apple `Speech` (guarded) |
-| `FleetVision` | `ImageCaptioner` over Frigate's `MLXVLM` | Frigate / MLX (guarded) |
-| `FleetStore` | `fleet-db`: UUID-keyed `TrainingDataset` + `TrainedAdapter` storage (ported from Totem's `FilePersistence`) | none (Foundation) |
-| `FleetTraining` | `FleetTrainer` + `FineTuningConfig` over Frigate's `LoRATrain` | Frigate / MLX |
-| `FleetInference` | `ChatSession` (base + LoRA adapter) and `ModelLoader` | Frigate / MLX |
-| `Fleet` | umbrella that re-exports all of the above | — |
-| `FleetCLI` | the `fleet finetune …` / `fleet chat …` executable | swift-argument-parser |
+| `FleetCore` | JSON model + canonical form, schema extraction, content ids, the gate automaton and token trie, mock domains, prompt format | none (Foundation) |
+| `FleetStore` | `fleet-db`: content-addressed LoRA storage, the registry, groups, cursor pagination, startup reconciliation | none (Foundation) |
+| `FleetTraining` | `StateTrainer` over Frigate's `LoRATrain`, plus the attribution manifest | Frigate / MLX |
+| `FleetInference` | `StructuredSession` and the gated `LogitSampler` that applies the schema at decode time | Frigate / MLX |
+| `FleetService` | the orchestration facade the app and CLI both drive | — |
+| `FleetConduit` | Fleet as a Conduit mothership Totems dial into | Conduit (gRPC) |
+| `FleetTasks` | experimental objective → validated job DAG → task deployment | none (Foundation) |
+| `Fleet` | umbrella re-exporting the above | — |
+| `FleetCLI` | the `fleet` executable | swift-argument-parser |
 
-A macOS app, [`Client/`](Client/) (`FleetClient`), drives the whole loop
-interactively — download a model, build a notes/Q&A dataset, fine-tune, then A/B
-chat the base vs the fine-tuned LoRA to test memory recall.
+The split that matters: **all** of the gate's logic — schema to automaton to token
+masks — lives in `FleetCore` behind a `TokenVocabulary` protocol, so it is tested
+against a handful of hand-written tokens with no MLX runtime. `FleetInference`
+only adapts a real tokenizer to that protocol and runs the loop.
 
-`FleetCore`, `FleetMedia`, and `FleetAudio` carry no MLX/Frigate dependency, so
-they build fast and stay portable. Image/audio decoders take inference *closures*
-(`ImageCaptioning` / `AudioTranscribing`) rather than concrete engines, which is
-what keeps `FleetMedia` free of the heavy graph — the CLI wires the closures from
-`FleetVision`/`FleetAudio` at the edge.
+### Experimental agentic task deployment
 
-## Linux compatibility
-
-The package compiles and runs the **text path** on Linux. Anything that needs an
-Apple framework is isolated behind `#if canImport(...)` and degrades gracefully:
-
-- `FleetVision` (`canImport(CoreImage)`) — Frigate excludes its VLM stack on
-  Linux, so image captioning is a no-op there.
-- `FleetAudio` (`canImport(Speech)`) — Apple Speech is the only bundled ASR;
-  Linux falls back to a no-op transcriber.
-- `PDFTextDecoder` (`canImport(PDFKit)`) — on Linux `pdf` is simply unregistered.
-
-So on Linux you get text/markdown/code/json/csv → fine-tune; PDF/image/audio are
-skipped. The build stays green either way. (Frigate's MLX core itself builds on
-Linux with CUDA or a CPU fallback via its `SPM_CUDA` setup.)
+`FleetTasks` begins the coordination layer Bonnie will use. An injected planning
+model converts one large objective into a small JSON job graph; Fleet validates
+the graph before a `TaskDeployment` actor lets workers atomically claim ready
+jobs. See [`Docs/BONNIE_TASK_DEPLOYMENT.md`](Docs/BONNIE_TASK_DEPLOYMENT.md).
 
 ## Roadmap
 
-- **Totem as a `ContextProvider`** — Totem partitions already match
-  `ContextFragment`; a `TotemContextProvider` over its HTTP/gRPC API is the next
-  provider once Totem exposes a public library.
-- **Adapter inference** — Frigate's `FrigateLLM` cannot yet load LoRA adapters; a
-  `fleet generate` subcommand follows once it can.
-- A cross-platform `AudioTranscriber` once a model is
-  vendored into Frigate or into Fleet. (SFSpeechRecognizer is used otherwise).
+- **gRPC ingestion** — a Conduit service wrapping `FleetService` so another
+  application can create datasets and request LoRAs over the wire. The facade is
+  already shaped request/response for this.
+- **Totem documents → pairs** — browsing and the transport are live; deriving
+  input/output pairs from Totem documents lands with the ingestion work.
+- **On-demand LoRAs** — the content-addressed store is the foundation: ask for a
+  LoRA by its input set, get the current generation or train one.
 
 ## Dependencies
 
-- [Frigate](https://github.com/rao-studios/Frigate) — vendored MLX engine (LLM/VLM inference, LoRA training).
+- [Frigate](https://github.com/rao-studios/Frigate) — vendored MLX engine (inference, LoRA training).
+- [Conduit](https://github.com/rao-studios/Conduit) — gRPC transport shared with Totem.
 - [swift-argument-parser](https://github.com/apple/swift-argument-parser) — CLI.
 
 Licensed under GPLv3.

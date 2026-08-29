@@ -1,35 +1,57 @@
+import FleetCore
 import XCTest
 
 @testable import FleetConduit
-@testable import FleetCore
 
 final class FleetConduitTests: XCTestCase {
 
-    func testFragmentsChunkAndDedupe() {
-        let partitions = [
-            TotemPartition(id: "p1", documentId: "d1", ownerId: "alice", text: "alpha", score: nil),
-            TotemPartition(id: "p2", documentId: "d1", ownerId: "alice", text: "alpha", score: nil),  // dup text
-            TotemPartition(id: "p3", documentId: "d2", ownerId: "alice", text: "   ", score: nil),  // empty
-            TotemPartition(id: "p4", documentId: "d2", ownerId: "alice", text: "beta", score: nil),
-        ]
-
-        let fragments = TotemImporter.fragments(from: partitions)
-
-        // "alpha" once (deduped), the blank dropped, "beta" kept → 2 fragments.
-        XCTAssertEqual(fragments.map(\.text).sorted(), ["alpha", "beta"])
-        XCTAssertTrue(fragments.allSatisfy { $0.mediaType == .text })
-        XCTAssertEqual(fragments.first { $0.text == "beta" }?.metadata?["source"], "totem")
-        XCTAssertEqual(fragments.first { $0.text == "beta" }?.metadata?["documentId"], "d2")
+    private func document(id: String = "d1", texts: [String] = ["one", "two"]) -> TotemDocument {
+        TotemDocument(
+            id: id,
+            name: "Notes.md",
+            ownerId: "alice",
+            groupId: "g1",
+            groupLabel: "Research",
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            texts: texts,
+            mediaType: "text"
+        )
     }
 
-    func testFragmentsChunksLongPartition() {
-        // Three distinct 1800-char paragraphs; each is its own chunk (< maxChars,
-        // and joining two would exceed it). Distinct content → no dedupe.
-        let text = ["a", "b", "c"].map { String(repeating: $0, count: 1800) }.joined(separator: "\n\n")
-        let fragments = TotemImporter.fragments(
-            from: [TotemPartition(id: "p1", documentId: "d1", ownerId: "o", text: text)],
-            maxChars: 2000)
-        XCTAssertEqual(fragments.count, 3)
-        XCTAssertTrue(fragments.allSatisfy { $0.text.count <= 2000 })
+    func testProvenanceRecordsWhichPartitionsWereUsed() {
+        let totemId = UUID()
+        let provenance = TotemImporter.provenance(
+            for: document(), totemId: totemId, textIndices: [0, 2])
+
+        XCTAssertEqual(provenance.origin, .totem)
+        XCTAssertEqual(provenance.ownerId, "alice")
+        XCTAssertEqual(provenance.totemId, totemId.uuidString)
+        XCTAssertEqual(provenance.documentId, "d1")
+        XCTAssertEqual(provenance.groupId, "g1")
+        // Partition ids no longer exist in Conduit's documents API, so position
+        // within the ordered texts array is the addressing we keep.
+        XCTAssertEqual(provenance.textIndices, [0, 2])
+        XCTAssertEqual(provenance.sourceLabel, "Notes.md")
+    }
+
+    func testAttributionFallsBackToTheOwner() {
+        let provenance = TotemImporter.provenance(
+            for: document(), totemId: UUID(), textIndices: [])
+        XCTAssertEqual(provenance.attributionKey, "alice")
+    }
+
+    func testDocumentBodyJoinsPartitionsInStoredOrder() {
+        XCTAssertEqual(document(texts: ["a", "b", "c"]).body, "a\n\nb\n\nc")
+    }
+
+    func testFetchReportsIdsTheTotemWithheld() {
+        // The Totem silently skips documents the caller may not read, so the
+        // fetch surfaces the difference rather than leaving it invisible.
+        let fetch = TotemDocumentFetch(
+            documents: [document(id: "d1"), document(id: "d2")],
+            inaccessibleIds: ["d3"]
+        )
+        XCTAssertEqual(fetch.documents.count, 2)
+        XCTAssertEqual(fetch.inaccessibleIds, ["d3"])
     }
 }

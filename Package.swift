@@ -1,25 +1,27 @@
 // swift-tools-version: 6.0
-// Fleet — Swift Agent Harness.
-// Coordinates contexts from a folder of mixed media, aligns them into a single
-// data structure, and off-loads a LoRA fine-tuning job onto a small on-device
-// LLM through the Frigate (MLX/GPU) engine.
+// Fleet — LoRA-gated JSON state machine training service.
+// Trains LoRA adapters through the Frigate (MLX/GPU) engine so that a small
+// on-device LLM always emits JSON matching a fixed schema of semantic keys.
+// A dataset is N input JSONs paired by index with N output JSONs; the schema
+// template is extracted from the outputs (keys + nesting + value types) and
+// enforced at decode time by masking logits against a schema automaton.
 //
 // Layout (one package, several library targets = "subpackages"):
-//   FleetCore      core data structure + coordination protocols   (Foundation only)
-//   FleetMedia     concrete media decoders + the routing registry  (Foundation only)
-//   FleetAudio     speech-to-text transcribers                     (Apple Speech, guarded)
-//   FleetVision    image captioning over Frigate MLXVLM            (Apple only, guarded)
-//   FleetStore     fleet-db: UUID-keyed dataset + adapter storage   (Foundation only)
-//   FleetTraining  Corpus -> Frigate LoRATrain.train -> adapter    (MLX/Frigate)
-//   FleetInference adapter-aware chat (base + LoRA)                (MLX/Frigate)
+//   FleetCore      JSON model, schema extraction, CID, gate automaton, mocks (Foundation only)
+//   FleetStore     fleet-db: content-addressed LoRA storage + registry       (Foundation only)
+//   FleetTasks     objective planning + dependency-aware deployment          (Foundation only)
+//   FleetTraining  StateDataset -> Frigate LoRATrain.train -> adapter        (MLX/Frigate)
+//   FleetInference schema-gated constrained decoding over a base + LoRA      (MLX/Frigate)
+//   FleetService   the orchestration facade the app and CLI both drive
+//   FleetConduit   Fleet as a Conduit mothership Totems dial into            (gRPC)
 //   Fleet          umbrella that re-exports the above
-//   FleetCLI       the `fleet finetune ...` executable
+//   FleetCLI       the `fleet` executable
 
 import PackageDescription
 
-// Build against the Swift 5 language mode to keep strict-concurrency checking off
-// while still using the modern manifest API. Frigate's MLX types are not Sendable
-// and flow through our async glue; v5 mode keeps that ergonomic.
+// MLX-facing and legacy targets use Swift 5 language mode because Frigate's MLX
+// types are not Sendable and flow through async glue. New Foundation-only targets
+// such as FleetTasks stay in Swift 6 mode and receive strict concurrency checks.
 let v5: [SwiftSetting] = [.swiftLanguageMode(.v5)]
 
 let package = Package(
@@ -31,11 +33,11 @@ let package = Package(
     products: [
         .library(name: "Fleet", targets: ["Fleet"]),
         .library(name: "FleetCore", targets: ["FleetCore"]),
-        .library(name: "FleetMedia", targets: ["FleetMedia"]),
         .library(name: "FleetStore", targets: ["FleetStore"]),
-        .library(name: "FleetGraph", targets: ["FleetGraph"]),
+        .library(name: "FleetTasks", targets: ["FleetTasks"]),
         .library(name: "FleetTraining", targets: ["FleetTraining"]),
         .library(name: "FleetInference", targets: ["FleetInference"]),
+        .library(name: "FleetService", targets: ["FleetService"]),
         .library(name: "FleetConduit", targets: ["FleetConduit"]),
         .executable(name: "fleet", targets: ["FleetCLI"]),
     ],
@@ -46,26 +48,6 @@ let package = Package(
     ],
     targets: [
         .target(name: "FleetCore", swiftSettings: v5),
-        .target(
-            name: "FleetAudio",
-            dependencies: ["FleetCore"],
-            swiftSettings: v5
-        ),
-        .target(
-            name: "FleetVision",
-            dependencies: [
-                "FleetCore",
-                .product(name: "MLXVLM", package: "Frigate"),
-                .product(name: "MLXLMCommon", package: "Frigate"),
-                .product(name: "MLX", package: "Frigate"),
-            ],
-            swiftSettings: v5
-        ),
-        .target(
-            name: "FleetMedia",
-            dependencies: ["FleetCore"],
-            swiftSettings: v5
-        ),
         .target(
             name: "FleetStore",
             dependencies: ["FleetCore"],
@@ -80,16 +62,11 @@ let package = Package(
             ],
             swiftSettings: v5
         ),
-        .target(
-            name: "FleetGraph",
-            dependencies: ["FleetCore", "FleetStore"],
-            swiftSettings: v5
-        ),
+        .target(name: "FleetTasks"),
         .target(
             name: "FleetInference",
             dependencies: [
                 "FleetCore",
-                "FleetGraph",
                 .product(name: "Frigate", package: "Frigate"),
                 .product(name: "MLXLLM", package: "Frigate"),
                 .product(name: "MLXLMCommon", package: "Frigate"),
@@ -111,10 +88,15 @@ let package = Package(
             swiftSettings: v5
         ),
         .target(
+            name: "FleetService",
+            dependencies: ["FleetCore", "FleetStore", "FleetTraining", "FleetInference"],
+            swiftSettings: v5
+        ),
+        .target(
             name: "Fleet",
             dependencies: [
-                "FleetCore", "FleetMedia", "FleetAudio", "FleetVision",
-                "FleetStore", "FleetGraph", "FleetTraining", "FleetInference",
+                "FleetCore", "FleetStore", "FleetTasks",
+                "FleetTraining", "FleetInference", "FleetService",
             ],
             swiftSettings: v5
         ),
@@ -129,10 +111,14 @@ let package = Package(
         .testTarget(
             name: "FleetTests",
             dependencies: [
-                "FleetCore", "FleetMedia", "FleetStore", "FleetGraph", "FleetConduit",
+                "FleetCore", "FleetStore", "FleetTraining", "FleetService", "FleetConduit",
                 .product(name: "Conduit", package: "Conduit"),
             ],
             swiftSettings: v5
+        ),
+        .testTarget(
+            name: "FleetTasksTests",
+            dependencies: ["FleetTasks"]
         ),
     ]
 )

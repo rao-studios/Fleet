@@ -24,10 +24,37 @@ public final class FilePersistence: @unchecked Sendable {
         }
     }
 
-    /// Root of the on-disk store: `~/Documents/fleet-db`.
+    /// Root of the on-disk store, `~/Documents/fleet-db` unless overridden.
     public static func getDefaultURL() -> URL {
+        if let override = rootOverride.value { return override }
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         return documents.appendingPathComponent("fleet-db")
+    }
+
+    /// Point the store somewhere else — a temporary directory in tests, or a
+    /// caller-chosen location. Set before any ``FleetDB`` is constructed.
+    public static func setRoot(_ url: URL?) {
+        rootOverride.value = url
+    }
+
+    private static let rootOverride = Box()
+
+    private final class Box: @unchecked Sendable {
+        private let lock = NSLock()
+        private var storage: URL?
+
+        var value: URL? {
+            get {
+                lock.lock()
+                defer { lock.unlock() }
+                return storage
+            }
+            set {
+                lock.lock()
+                storage = newValue
+                lock.unlock()
+            }
+        }
     }
 
     public func save<State: Codable>(state: State) {

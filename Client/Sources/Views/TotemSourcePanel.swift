@@ -2,18 +2,17 @@ import Fleet
 import FleetConduit
 import SwiftUI
 
-/// Persistent Totem import panel that lives in the Dataset tab's right column.
+/// Explorer for the Totems connected to this Fleet.
+///
 /// The Fleet Conduit server (hosted by `AppState`) stays alive and is monitored
-/// here; a Browse (groups → partitions) and a Search journey, both multi-select,
-/// feed a selection cart that adds into the currently-selected dataset.
+/// here; Browse walks groups into document contents, and Search finds partitions
+/// across the Totem. Turning selected documents into input/output pairs comes
+/// with the gRPC ingestion work — the transport and the browsing are in place.
 struct TotemSourcePanel: View {
     @EnvironmentObject private var appState: AppState
 
-    /// The dataset that "Add" appends to (the one selected on the left).
-    let targetDataset: TrainingDataset?
     /// Drives the column's collapse from the panel's own header chevron.
     @Binding var showPanel: Bool
-    let onImport: ([TrainingRecord]) -> Void
 
     private enum Mode: String, CaseIterable, Identifiable {
         case browse = "Browse"
@@ -27,11 +26,10 @@ struct TotemSourcePanel: View {
     @State private var groups: [TotemGroupSummary] = []
     @State private var groupsHasMore = false
     @State private var loadingMore = false
-    @State private var groupPartitions: [String: [TotemPartition]] = [:]
+    @State private var groupDocuments: [String: [TotemDocument]] = [:]
     @State private var searchQuery = ""
     @State private var searchResults: [TotemPartition] = []
-    @State private var selected: [String: TotemPartition] = [:]
-    @State private var importKind: RecordImport.Kind = .qa
+    @State private var selected: [String: TotemDocument] = [:]
     @State private var status = ""
     @State private var busy = false
 
@@ -250,20 +248,20 @@ struct TotemSourcePanel: View {
 
     @ViewBuilder
     private func groupBody(_ group: TotemGroupSummary) -> some View {
-        if let partitions = groupPartitions[group.id] {
+        if let documents = groupDocuments[group.id] {
             VStack(alignment: .leading, spacing: 5) {
                 HStack {
-                    Text("\(partitions.count) partitions")
+                    Text("\(documents.count) documents")
                         .font(.fleetSans(9)).foregroundStyle(Color.fleetInk.opacity(0.4))
                     Spacer()
-                    Button("Select all") { for p in partitions { selected[p.id] = p } }
+                    Button("Select all") { for document in documents { selected[document.id] = document } }
                         .buttonStyle(.plain).font(.fleetSans(9, weight: .medium)).foregroundStyle(Color.fleetGold)
                 }
-                ForEach(partitions) { partitionRow($0) }
+                ForEach(documents) { documentRow($0) }
             }
             .padding(.top, 4)
         } else {
-            Button("Load partitions") { Task { await loadPartitions(group) } }
+            Button("Load documents") { Task { await loadDocuments(group) } }
                 .buttonStyle(.fleetQuiet).padding(.vertical, 4)
         }
     }
@@ -289,11 +287,12 @@ struct TotemSourcePanel: View {
         }
     }
 
-    // MARK: - Partition row (multi-select)
+    // MARK: - Rows
 
-    private func partitionRow(_ partition: TotemPartition) -> some View {
-        let isSelected = selected[partition.id] != nil
-        return Button { toggle(partition) } label: {
+    /// A document from Browse — selectable, and showing how many partitions it holds.
+    private func documentRow(_ document: TotemDocument) -> some View {
+        let isSelected = selected[document.id] != nil
+        return Button { toggle(document) } label: {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: isSelected ? "checkmark.square.fill" : "square")
                     .font(.fleetSans(13))
@@ -301,13 +300,14 @@ struct TotemSourcePanel: View {
                     .frame(width: 16, height: 16)
                     .padding(.top, 1)  // sit the box on the first text line
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(partition.text)
-                        .font(.fleetSans(11)).foregroundStyle(Color.fleetInk.opacity(0.85))
-                        .lineLimit(3).multilineTextAlignment(.leading)
-                    if let score = partition.score {
-                        Text("score \(String(format: "%.3f", score))")
-                            .font(.fleetMono(8)).foregroundStyle(Color.fleetInk.opacity(0.4))
-                    }
+                    Text(document.name.isEmpty ? document.id : document.name)
+                        .font(.fleetSans(11, weight: .medium)).foregroundStyle(Color.fleetInk)
+                        .lineLimit(1)
+                    Text(document.body)
+                        .font(.fleetSans(10)).foregroundStyle(Color.fleetInk.opacity(0.7))
+                        .lineLimit(2).multilineTextAlignment(.leading)
+                    Text("\(document.texts.count) partitions")
+                        .font(.fleetMono(8)).foregroundStyle(Color.fleetInk.opacity(0.4))
                 }
                 Spacer(minLength: 0)
             }
@@ -315,6 +315,24 @@ struct TotemSourcePanel: View {
             .background(RoundedRectangle(cornerRadius: 7).fill(Color.fleetFill))
         }
         .buttonStyle(.plain)
+    }
+
+    /// A search hit — read-only; selection happens over whole documents in Browse.
+    private func partitionRow(_ partition: TotemPartition) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(partition.text)
+                    .font(.fleetSans(11)).foregroundStyle(Color.fleetInk.opacity(0.85))
+                    .lineLimit(3).multilineTextAlignment(.leading)
+                if let score = partition.score {
+                    Text("score \(String(format: "%.3f", score))")
+                        .font(.fleetMono(8)).foregroundStyle(Color.fleetInk.opacity(0.4))
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 7).fill(Color.fleetFill))
     }
 
     // MARK: - Footer
@@ -329,36 +347,30 @@ struct TotemSourcePanel: View {
                         .font(.fleetSans(10)).foregroundStyle(Color.fleetInk.opacity(0.4))
                 }
                 Spacer()
-                Picker("", selection: $importKind) {
-                    ForEach(RecordImport.Kind.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented).labelsHidden().frame(width: 130)
+                Text("\(selectedPartitionCount) partitions")
+                    .font(.fleetMono(9)).foregroundStyle(Color.fleetInk.opacity(0.4))
             }
-            Text(importKind == .qa
-                 ? "Q&A — generate a question per chunk (answer = the chunk)."
-                 : "Note — import the raw chunk as a note.")
-                .font(.fleetSans(9)).foregroundStyle(Color.fleetInk.opacity(0.4))
-            Button(addLabel) { addToDataset() }
-                .buttonStyle(.fleet)
-                .frame(maxWidth: .infinity)
-                .disabled(targetDataset == nil || selected.isEmpty || busy)
-            if targetDataset == nil {
-                Text("Select a dataset on the left to import into.")
-                    .font(.fleetSans(9)).foregroundStyle(Color.fleetInk.opacity(0.4))
-            }
+            Text(
+                "Fleet trains on paired input/output JSON. Turning Totem documents into pairs "
+                    + "arrives with the gRPC ingestion work; browsing and the transport are live."
+            )
+            .font(.fleetSans(9)).foregroundStyle(Color.fleetInk.opacity(0.4))
         }
         .padding(inset)
     }
 
-    private var addLabel: String {
-        if let name = targetDataset?.name { return "Add to \(name)" }
-        return "Add to dataset"
+    private var selectedPartitionCount: Int {
+        selected.values.reduce(0) { $0 + $1.texts.count }
     }
 
     // MARK: - Actions
 
-    private func toggle(_ partition: TotemPartition) {
-        if selected[partition.id] != nil { selected[partition.id] = nil } else { selected[partition.id] = partition }
+    private func toggle(_ document: TotemDocument) {
+        if selected[document.id] != nil {
+            selected[document.id] = nil
+        } else {
+            selected[document.id] = document
+        }
     }
 
     private func loadLibrary() async {
@@ -369,7 +381,7 @@ struct TotemSourcePanel: View {
             let page = try await appState.totemImporter().library(totemId: totemId, ownerId: ownerId)
             groups = page.groups
             groupsHasMore = page.hasMore
-            groupPartitions = [:]
+            groupDocuments = [:]
             status = groupsStatus
         } catch { status = "⚠️ \(error)" }
         busy = false
@@ -394,14 +406,19 @@ struct TotemSourcePanel: View {
         groupsHasMore ? "\(groups.count) groups · more available" : "\(groups.count) groups"
     }
 
-    private func loadPartitions(_ group: TotemGroupSummary) async {
+    private func loadDocuments(_ group: TotemGroupSummary) async {
         guard let totemId = selectedTotemId else { return }
-        busy = true; status = "Loading partitions…"
+        busy = true; status = "Loading documents…"
         do {
-            let partitions = try await appState.totemImporter()
-                .partitions(totemId: totemId, ownerId: ownerId, documentIds: group.documents.map(\.id))
-            groupPartitions[group.id] = partitions
-            status = "\(partitions.count) partitions in \(group.label.isEmpty ? group.id : group.label)"
+            let fetch = try await appState.totemImporter()
+                .documents(totemId: totemId, ownerId: ownerId, documentIds: group.documents.map(\.id))
+            groupDocuments[group.id] = fetch.documents
+            let name = group.label.isEmpty ? group.id : group.label
+            status = "\(fetch.documents.count) documents in \(name)"
+            // The Totem omits documents this owner may not read rather than failing.
+            if !fetch.inaccessibleIds.isEmpty {
+                status += " · \(fetch.inaccessibleIds.count) not accessible"
+            }
         } catch { status = "⚠️ \(error)" }
         busy = false
     }
@@ -419,40 +436,4 @@ struct TotemSourcePanel: View {
         busy = false
     }
 
-    private func addToDataset() {
-        guard let totemId = selectedTotemId else { return }
-        let partitions = Array(selected.values)
-        guard !partitions.isEmpty else { return }
-        let kind = importKind
-        // Context for Q&A is built from partitions already loaded here — no refetch.
-        let contextPartitions = loadedPartitions()
-        busy = true
-        status = kind == .qa ? "Generating Q&A…" : "Importing…"
-        Task {
-            let records = await RecordImport.totemRecords(
-                partitions: partitions, contextPartitions: contextPartitions, kind: kind,
-                totemId: totemId, ownerId: ownerId, modelId: appState.activeModelId
-            ) { done, total in
-                Task { @MainActor in status = "\(kind == .qa ? "Generating" : "Importing") \(done)/\(total)…" }
-            }
-            await MainActor.run {
-                onImport(records)
-                status = "Added \(records.count) to \(targetDataset?.name ?? "dataset")"
-                selected = [:]  // keep the panel open for the next import
-                busy = false
-            }
-        }
-    }
-
-    /// Every partition currently loaded in the panel (browsed groups + search
-    /// results), deduped — the document context source for Q&A generation.
-    private func loadedPartitions() -> [TotemPartition] {
-        var seen = Set<String>()
-        var pool: [TotemPartition] = []
-        for parts in groupPartitions.values {
-            for p in parts where seen.insert(p.id).inserted { pool.append(p) }
-        }
-        for p in searchResults where seen.insert(p.id).inserted { pool.append(p) }
-        return pool
-    }
 }

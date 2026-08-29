@@ -2,16 +2,18 @@ import Fleet
 import FleetConduit
 import Foundation
 import SwiftUI
+
 #if canImport(Darwin)
 import Darwin
 #endif
 
-/// The screens in the workflow sidebar.
+/// The screens in the workflow sidebar, in the order the work happens.
 enum Screen: String, CaseIterable, Identifiable {
     case models = "Models"
     case datasets = "Datasets"
-    case fineTune = "Fine-tune"
-    case chat = "Chat"
+    case train = "Train"
+    case library = "Library"
+    case playground = "Playground"
 
     var id: String { rawValue }
 
@@ -19,17 +21,21 @@ enum Screen: String, CaseIterable, Identifiable {
         switch self {
         case .models: return "arrow.down.circle"
         case .datasets: return "tray.full"
-        case .fineTune: return "wand.and.stars"
-        case .chat: return "bubble.left.and.bubble.right"
+        case .train: return "wand.and.stars"
+        case .library: return "square.stack.3d.up"
+        case .playground: return "bolt.horizontal"
         }
     }
 }
 
 /// App-wide state container (single source of truth, injected via environment).
+///
+/// All pipeline work goes through ``FleetService`` — this holds only what the
+/// views need to render, plus the Totem server the app hosts.
 @MainActor
 final class AppState: ObservableObject {
 
-    let db = FleetDB()
+    let service = FleetService()
 
     // Totem import (Conduit gRPC) — Fleet hosts the server; Totems dial in.
     let totemServer = FleetTotemServer()
@@ -40,19 +46,20 @@ final class AppState: ObservableObject {
     private var totemStreamTask: Task<Void, Never>?
 
     // Navigation
-    @Published var screen: Screen = .models
+    @Published var screen: Screen = .datasets
 
-    // Data
-    @Published var datasets: [TrainingDataset] = []
-    @Published var adapters: [TrainedAdapter] = []
+    // Library
+    @Published var datasets: [DatasetEntry] = []
+    @Published var loras: [LoRAEntry] = []
+    @Published var groups: [GroupEntry] = []
+    @Published var groupMembership: [String: [String]] = [:]  // cid → group labels
 
-    // Models — @Published + UserDefaults (so selection changes refresh the UI).
-    private static let defaultModel = "mlx-community/Qwen3-0.6B-4bit"
+    // Models
+    private static let defaultModel = TrainingConfig.defaultModelId
     private let defaults = UserDefaults.standard
     private enum Keys {
         static let activeModel = "fleet.activeModel"
         static let knownModels = "fleet.knownModels"
-        static let parallelLanes = "fleet.parallelLanes"
     }
 
     @Published var activeModelId: String {
@@ -60,18 +67,6 @@ final class AppState: ObservableObject {
     }
     @Published private var knownModelsRaw: String {
         didSet { defaults.set(knownModelsRaw, forKey: Keys.knownModels) }
-    }
-
-    /// True-parallel ensemble lanes — each lane is a full base-model copy.
-    @Published var parallelLanes: Int {
-        didSet { defaults.set(parallelLanes, forKey: Keys.parallelLanes) }
-    }
-
-    init() {
-        self.knownModelsRaw = defaults.string(forKey: Keys.knownModels) ?? AppState.defaultModel
-        self.activeModelId = defaults.string(forKey: Keys.activeModel) ?? AppState.defaultModel
-        let savedLanes = defaults.integer(forKey: Keys.parallelLanes)  // 0 when unset
-        self.parallelLanes = savedLanes == 0 ? 2 : savedLanes
     }
 
     @Published var warmingModelId: String?
@@ -83,7 +78,9 @@ final class AppState: ObservableObject {
     @Published var isTraining = false
     @Published var trainingLog: [String] = []
     @Published var trainingError: String?
-    @Published var lastTrainedAdapterId: UUID?
+    @Published var lossHistory: [(iteration: Int, loss: Float)] = []
+    @Published var lastTrainedCID: String?
+    private var trainingTask: Task<Void, Never>?
 
     var knownModels: [String] {
         knownModelsRaw
@@ -92,11 +89,29 @@ final class AppState: ObservableObject {
             .filter { !$0.isEmpty }
     }
 
+    init() {
+        self.knownModelsRaw = defaults.string(forKey: Keys.knownModels) ?? AppState.defaultModel
+        self.activeModelId = defaults.string(forKey: Keys.activeModel) ?? AppState.defaultModel
+    }
+
     // MARK: - Lifecycle
 
+    /// Sweep up after any interrupted run, then load the library.
+    func start() async {
+        _ = await service.start()
+        await refresh()
+    }
+
     func refresh() async {
-        datasets = await db.allDatasets()
-        adapters = await db.allAdapters()
+        datasets = await service.allDatasets()
+        loras = await service.allLoRAs()
+        groups = await service.groups()
+        var membership: [String: [String]] = [:]
+        for entry in loras {
+            let labels = await service.groups(forLoRA: entry.cid).map(\.label)
+            if !labels.isEmpty { membership[entry.cid] = labels }
+        }
+        groupMembership = membership
     }
 
     // MARK: - Models
@@ -131,6 +146,128 @@ final class AppState: ObservableObject {
             warmStatus = "Failed"
         }
         warmingModelId = nil
+    }
+
+    // MARK: - Datasets
+
+    func generateMockDataset(domain: MockDomain, count: Int, seed: UInt64) async throws
+        -> DatasetEntry
+    {
+        let entry = try await service.generateMockDataset(
+            domain: domain, count: count, seed: seed)
+        await refresh()
+        return entry
+    }
+
+    func importDataset(name: String, inputs: [URL], outputs: [URL]) async throws -> DatasetEntry {
+        let entry = try await service.importDataset(
+            name: name, inputFiles: inputs, outputFiles: outputs)
+        await refresh()
+        return entry
+    }
+
+    func dataset(id: UUID) async -> StateDataset? {
+        await service.dataset(id: id)
+    }
+
+    func validationReport(datasetId: UUID) async -> ValidationReport? {
+        try? await service.validationReport(datasetId: datasetId)
+    }
+
+    func deleteDataset(_ id: UUID) async {
+        await service.deleteDataset(id: id)
+        await refresh()
+    }
+
+    // MARK: - Training
+
+    func train(datasetId: UUID, config: TrainingConfig) {
+        guard !isTraining else { return }
+        isTraining = true
+        trainingError = nil
+        trainingLog = []
+        lossHistory = []
+        lastTrainedCID = nil
+
+        trainingTask = Task {
+            do {
+                let stream = try await service.train(datasetId: datasetId, config: config)
+                for try await progress in stream {
+                    switch progress {
+                    case .preparing(let pairs, let tokens):
+                        log("Preparing \(pairs) pairs · longest example \(tokens) tokens")
+                        if tokens > 2048 {
+                            log(
+                                "⚠︎ Examples longer than 2048 tokens may be truncated during "
+                                    + "training.")
+                        }
+                    case .loadingModel(let fraction, let status):
+                        log("Loading model \(Int(fraction * 100))% — \(status)")
+                    case .step(let iteration, let loss, let itersPerSecond, let tokensPerSecond):
+                        lossHistory.append((iteration, loss))
+                        log(
+                            "iter \(iteration) · loss \(String(format: "%.4f", loss)) · "
+                                + "\(String(format: "%.1f", itersPerSecond)) it/s · "
+                                + "\(Int(tokensPerSecond)) tok/s")
+                    case .validation(let iteration, let loss, _):
+                        log("iter \(iteration) · validation loss \(String(format: "%.4f", loss))")
+                    case .checkpointed(let iteration):
+                        log("checkpoint at \(iteration)")
+                    case .finished(let cid, _):
+                        lastTrainedCID = cid
+                        log("✓ Stored LoRA \(ContentID.short(cid))")
+                    }
+                }
+            } catch is CancellationError {
+                log("Cancelled.")
+            } catch {
+                trainingError = "\(error)"
+                log("✗ \(error)")
+            }
+            isTraining = false
+            await refresh()
+        }
+    }
+
+    func cancelTraining() {
+        trainingTask?.cancel()
+        trainingTask = nil
+    }
+
+    private func log(_ line: String) {
+        trainingLog.append(line)
+    }
+
+    // MARK: - Library
+
+    func setLabel(cid: String, label: String?) async {
+        await service.setLabel(cid: cid, label: label)
+        await refresh()
+    }
+
+    func deleteLoRA(cid: String) async {
+        await service.deleteLoRA(cid: cid)
+        await refresh()
+    }
+
+    func createGroup(label: String) async {
+        _ = await service.createGroup(label: label)
+        await refresh()
+    }
+
+    func deleteGroup(id: String) async {
+        await service.deleteGroup(id: id)
+        await refresh()
+    }
+
+    func add(cid: String, toGroup groupId: String) async {
+        await service.add(cid: cid, toGroup: groupId)
+        await refresh()
+    }
+
+    func remove(cid: String, fromGroup groupId: String) async {
+        await service.remove(cid: cid, fromGroup: groupId)
+        await refresh()
     }
 
     // MARK: - Totem import server
@@ -198,83 +335,5 @@ final class AppState: ObservableObject {
 
     func totemImporter() async -> TotemImporter {
         await totemServer.importer()
-    }
-
-    // MARK: - Datasets
-
-    func createDataset(name: String) async -> TrainingDataset {
-        let dataset = TrainingDataset(name: name.isEmpty ? "Untitled" : name)
-        await db.saveDataset(dataset)
-        await refresh()
-        return dataset
-    }
-
-    func saveDataset(_ dataset: TrainingDataset) async {
-        await db.saveDataset(dataset)
-        await refresh()
-    }
-
-    func deleteDataset(_ id: UUID) async {
-        await db.deleteDataset(id: id)
-        await refresh()
-    }
-
-    /// Decode files (or folders) into text fragments via the standard registry.
-    func decodeFiles(_ urls: [URL]) async -> [ContextFragment] {
-        let registry = DecoderRegistry.standard()
-        var fragments: [ContextFragment] = []
-        for url in urls {
-            fragments.append(contentsOf: (try? await registry.decode(url)) ?? [])
-        }
-        return fragments
-    }
-
-    // MARK: - Fine-tuning
-
-    func fineTune(dataset: TrainingDataset, modelId: String, rank: Int, iterations: Int) async {
-        isTraining = true
-        trainingError = nil
-        trainingLog = ["Building corpus from \(dataset.trainingExamples.count) examples (\(dataset.records.count) records)…"]
-        lastTrainedAdapterId = nil
-
-        let adapter = TrainedAdapter(
-            datasetId: dataset.id,
-            name: "\(dataset.name) · r\(rank)/\(iterations)",
-            modelId: modelId,
-            rank: rank,
-            scale: 20,
-            numLayers: 16,
-            iterations: iterations
-        )
-        let outputDir = db.adapterDirectory(for: adapter.id)
-
-        var config = FineTuningConfig(outputAdapterDir: outputDir)
-        config.modelId = modelId
-        config.rank = rank
-        config.iterations = iterations
-
-        do {
-            let trainer = FleetTrainer(config: config)
-            for try await event in trainer.run(corpus: dataset.corpus) {
-                switch event {
-                case .progress(let progress):
-                    trainingLog.append(progress.description)
-                case .finished(let dir):
-                    trainingLog.append("Adapter written to \(dir.lastPathComponent)")
-                }
-            }
-            await db.saveAdapter(adapter)
-            // Snapshot the training records + royalty attribution beside the weights.
-            let manifest = TrainingRecordManifest(adapter: adapter, dataset: dataset)
-            await db.saveTrainingRecords(manifest)
-            lastTrainedAdapterId = adapter.id
-            trainingLog.append("✓ Saved adapter \(adapter.id.uuidString.prefix(8)) (dataset \(dataset.id.uuidString.prefix(8)))")
-            trainingLog.append(manifest.summaryLine)
-            await refresh()
-        } catch {
-            trainingError = "\(error)"
-            trainingLog.append("✗ \(error)")
-        }
-        isTraining = false
     }
 }
