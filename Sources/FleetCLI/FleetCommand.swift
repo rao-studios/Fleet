@@ -1,5 +1,6 @@
 import ArgumentParser
 import Fleet
+import FleetConduit
 import Foundation
 
 @main
@@ -15,6 +16,7 @@ struct FleetCommand: AsyncParsableCommand {
             """,
         subcommands: [
             Datasets.self, Train.self, Test.self, Loras.self, Groups.self, Smoke.self,
+            Serve.self,
         ]
     )
 }
@@ -516,5 +518,33 @@ struct Smoke: AsyncParsableCommand {
             "\n✓ Output matched the schema. "
                 + "\(Int((result.forcedFraction * 100).rounded()))% of tokens were forced.")
         await service.shutdown()
+    }
+}
+
+// MARK: - Serve
+
+struct Serve: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Host FleetLoRA gRPC plus HTTP /health for Mary to dial.")
+
+    @Option(name: .long, help: "HTTP health port.")
+    var port: Int = FleetLoRAServer.defaultHTTPPort
+
+    @Option(name: .long, help: "gRPC FleetLoRA port.")
+    var grpcPort: Int = FleetLoRAServer.defaultGRPCPort
+
+    @Option(name: .long, help: "Local Totem host for ExportCorpus pull.")
+    var totemHost: String = "127.0.0.1"
+
+    @Option(name: .long, help: "Local Totem gRPC port.")
+    var totemGrpcPort: Int = 9090
+
+    func run() async throws {
+        print("fleet serve — health http://127.0.0.1:\(port)/health  gRPC \(grpcPort)")
+        try await FleetLoRAServer.serve(
+            httpPort: port,
+            grpcPort: grpcPort,
+            totemHost: totemHost,
+            totemPort: totemGrpcPort)
     }
 }

@@ -213,7 +213,76 @@ public actor FleetService {
                             continuation.yield(
                                 .finished(
                                     cid: entry.cid,
-                                    adapterDirectory: db.adapterDirectory(cid: entry.cid)))
+                                    adapterDirectory: db.adapterDirectory(for: entry)))
+                        } else {
+                            continuation.yield(progress)
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    try? FileManager.default.removeItem(at: staging)
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { reason in
+                task.cancel()
+                if case .cancelled = reason {
+                    try? FileManager.default.removeItem(at: staging)
+                }
+            }
+        }
+    }
+
+    /// Train a LoRA and publish it under `loras/<totemId>/<abilityId>/`.
+    public func trainNamed(
+        datasetId: UUID,
+        totemId: String,
+        abilityId: String,
+        config: TrainingConfig = TrainingConfig()
+    ) async throws -> AsyncThrowingStream<TrainingProgress, Error> {
+        guard let dataset = await db.loadDataset(id: datasetId) else {
+            throw FleetServiceError.datasetNotFound(datasetId)
+        }
+        guard !dataset.pairs.isEmpty else { throw FleetServiceError.noPairs }
+
+        let staging = try db.makeStagingDirectory()
+        let trainer = StateTrainer(config: config)
+        let db = self.db
+
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    for try await progress in trainer.run(
+                        dataset: dataset, stagingDirectory: staging)
+                    {
+                        if case .finished(let cid, _) = progress {
+                            let entry = try await db.publishNamedLoRA(
+                                totemId: totemId,
+                                abilityId: abilityId,
+                                cid: cid,
+                                from: staging
+                            ) { previous in
+                                LoRAEntry(
+                                    cid: cid,
+                                    label: previous?.label ?? abilityId,
+                                    modelId: config.modelId,
+                                    datasetId: dataset.id,
+                                    schemaHash: dataset.schema.hashHex,
+                                    schemaDescription: dataset.schema.description,
+                                    pairCount: dataset.pairs.count,
+                                    rank: config.rank,
+                                    scale: config.scale,
+                                    numLayers: config.numLayers,
+                                    iterations: config.iterations,
+                                    totemId: totemId,
+                                    abilityId: abilityId
+                                )
+                            }
+                            await self.invalidateSession(cid: entry.cid)
+                            continuation.yield(
+                                .finished(
+                                    cid: entry.cid,
+                                    adapterDirectory: db.adapterDirectory(for: entry)))
                         } else {
                             continuation.yield(progress)
                         }
@@ -295,7 +364,7 @@ public actor FleetService {
         }
         let session = StructuredSession(
             modelId: entry.modelId,
-            adapterDirectory: db.adapterDirectory(cid: cid)
+            adapterDirectory: db.adapterDirectory(for: entry)
         )
         sessions[cid] = session
         touch(cid: cid)
@@ -335,8 +404,28 @@ public actor FleetService {
         await db.lora(cid: cid)
     }
 
+    public func loras(totemId: String) async -> [LoRAEntry] {
+        await db.loras(totemId: totemId)
+    }
+
+    public func lora(totemId: String, abilityId: String) async -> LoRAEntry? {
+        await db.lora(totemId: totemId, abilityId: abilityId)
+    }
+
     public func schema(cid: String) -> SchemaTemplate? {
         db.schema(cid: cid)
+    }
+
+    public func schemaJSON(cid: String) -> Data? {
+        db.schemaJSON(cid: cid)
+    }
+
+    public func hasWeights(cid: String) -> Bool {
+        db.hasWeights(cid: cid)
+    }
+
+    public func adapterDirectory(for entry: LoRAEntry) -> URL {
+        db.adapterDirectory(for: entry)
     }
 
     public func setLabel(cid: String, label: String?) async {

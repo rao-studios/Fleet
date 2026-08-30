@@ -45,6 +45,8 @@ let package = Package(
         .package(path: "../Frigate"),
         .package(path: "../Conduit"),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
+        .package(url: "https://github.com/grpc/grpc-swift.git", from: "2.0.0"),
+        .package(url: "https://github.com/grpc/grpc-swift-nio-transport.git", from: "1.0.0"),
     ],
     targets: [
         .target(name: "FleetCore", swiftSettings: v5),
@@ -58,7 +60,10 @@ let package = Package(
             dependencies: [
                 "FleetCore",
                 "FleetStore",
+                "FleetService",
                 .product(name: "Conduit", package: "Conduit"),
+                .product(name: "GRPCCore", package: "grpc-swift"),
+                .product(name: "GRPCNIOTransportHTTP2", package: "grpc-swift-nio-transport"),
             ],
             swiftSettings: v5
         ),
@@ -104,6 +109,7 @@ let package = Package(
             name: "FleetCLI",
             dependencies: [
                 "Fleet",
+                "FleetConduit",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             swiftSettings: v5

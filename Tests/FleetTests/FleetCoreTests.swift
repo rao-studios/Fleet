@@ -273,3 +273,59 @@ final class PromptBuilderTests: XCTestCase {
         XCTAssertTrue(prompt.hasSuffix("OUTPUT:\n"))
     }
 }
+
+final class BehavioralPairProjectorTests: XCTestCase {
+
+    func testProjectsFrozenKeysAndDropsAX() throws {
+        let episode = try JSONParser.parse("""
+            {
+              "schema":"mary.behavior",
+              "input":{
+                "query":"type this",
+                "priorEpisodeID":"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+                "ambient":{
+                  "mode":"focusedWorld",
+                  "lead":"textedit",
+                  "facts":[{},{}],
+                  "renderedBlocks":["Essay — 1,840 characters"]
+                }
+              },
+              "output":{
+                "actions":[{
+                  "disposition":"succeeded",
+                  "summary":"typed",
+                  "action":{
+                    "intention":"type_at_cursor",
+                    "argumentsJSON":"{\\"text\\":\\"hi\\"}",
+                    "skill":{"skillID":"writing.type-at-cursor","invocationName":"type_at_cursor"}
+                  }
+                }]
+              },
+              "abilityTargets":[{"abilityID":"writing","paradigm":"discipline"}],
+              "sealedReason":"completed"
+            }
+            """)
+        XCTAssertTrue(BehavioralPairProjector.isTrainable(episode))
+        let pair = try BehavioralPairProjector.pair(from: episode)
+        XCTAssertEqual(pair.input["query"]?.stringValue, "type this")
+        XCTAssertEqual(pair.input["ambient_lead"]?.stringValue, "textedit")
+        XCTAssertEqual(pair.input["fact_count"]?.doubleValue, 2)
+        XCTAssertNil(pair.input["target"])
+        let action = pair.output["actions"]?.elements?.first
+        XCTAssertEqual(action?["intention"]?.stringValue, "type_at_cursor")
+        XCTAssertEqual(action?["skill_id"]?.stringValue, "writing.type-at-cursor")
+        XCTAssertEqual(action?["invocation_name"]?.stringValue, "type_at_cursor")
+        let schema = try SchemaExtractor.template(outputs: [
+            pair.output,
+            try JSONParser.parse(#"{"actions":[]}"#),
+        ])
+        XCTAssertTrue(schema.description.contains("actions"))
+        let extra = try JSONParser.parse(#"{"actions":[],"nope":true}"#)
+        XCTAssertFalse(SchemaExtractor.validate(extra, against: schema).isEmpty)
+    }
+
+    func testSupersededEpisodesAreNotTrainable() throws {
+        let episode = try JSONParser.parse(#"{"input":{"query":"x"},"abilityTargets":[{}],"sealedReason":"superseded"}"#)
+        XCTAssertFalse(BehavioralPairProjector.isTrainable(episode))
+    }
+}

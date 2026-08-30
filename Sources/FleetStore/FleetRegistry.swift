@@ -21,6 +21,9 @@ public struct LoRAEntry: Sendable, Codable, Identifiable, Equatable {
     public var updatedAt: Date
     /// Incremented each time this CID is retrained — same inputs, evolved outputs.
     public var generation: Int
+    /// Named-slot addressing: one LoRA per totem × ability. Nil for CID-only smoke LoRAs.
+    public var totemId: String?
+    public var abilityId: String?
 
     public var id: String { cid }
 
@@ -38,7 +41,9 @@ public struct LoRAEntry: Sendable, Codable, Identifiable, Equatable {
         iterations: Int,
         createdAt: Date = .now,
         updatedAt: Date = .now,
-        generation: Int = 1
+        generation: Int = 1,
+        totemId: String? = nil,
+        abilityId: String? = nil
     ) {
         self.cid = cid
         self.label = label
@@ -54,6 +59,8 @@ public struct LoRAEntry: Sendable, Codable, Identifiable, Equatable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.generation = generation
+        self.totemId = totemId
+        self.abilityId = abilityId
     }
 
     public var shortCID: String { ContentID.short(cid) }
@@ -81,6 +88,8 @@ public struct LoRAEntry: Sendable, Codable, Identifiable, Equatable {
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? .now
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? .now
         generation = try container.decodeIfPresent(Int.self, forKey: .generation) ?? 1
+        totemId = try container.decodeIfPresent(String.self, forKey: .totemId)
+        abilityId = try container.decodeIfPresent(String.self, forKey: .abilityId)
     }
 }
 
@@ -186,6 +195,9 @@ public struct FleetRegistry: Sendable, Codable {
     /// cid → group ids, kept sorted.
     public var loraGroups: [String: [String]] = [:]
     public var datasets: [UUID: DatasetEntry] = [:]
+    /// `"totemId|abilityId"` → cid. The named slot is the user-facing identity;
+    /// the CID remains provenance on the entry.
+    public var namedSlots: [String: String] = [:]
 
     public init() {}
 
@@ -200,6 +212,8 @@ public struct FleetRegistry: Sendable, Codable {
         loraGroups =
             try container.decodeIfPresent([String: [String]].self, forKey: .loraGroups) ?? [:]
         datasets = try container.decodeIfPresent([UUID: DatasetEntry].self, forKey: .datasets) ?? [:]
+        namedSlots =
+            try container.decodeIfPresent([String: String].self, forKey: .namedSlots) ?? [:]
         normalize()
     }
 
@@ -216,6 +230,7 @@ public struct FleetRegistry: Sendable, Codable {
             loraGroups[cid] = Array(Set(live)).sorted()
         }
         loraGroups = loraGroups.filter { loras[$0.key] != nil }
+        namedSlots = namedSlots.filter { loras[$0.value] != nil }
     }
 
     // MARK: - Sorted views (the pagination cursors walk these)
