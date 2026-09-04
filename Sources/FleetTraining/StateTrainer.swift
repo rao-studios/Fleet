@@ -54,8 +54,18 @@ public struct StateTrainer {
         let examples = dataset.trainingTexts
         guard !examples.isEmpty else { throw TrainingError.emptyDataset }
 
-        let split = Self.split(examples, validationFraction: config.validationFraction)
-        let trainSet = split.train
+        // Split the PAIRS, not the rendered strings, so the caller can score
+        // the published adapter against exactly the examples it never saw.
+        let pairSplit = Self.splitPairs(
+            dataset.pairs, validationFraction: config.validationFraction)
+        let split = (
+            train: pairSplit.train.map {
+                PromptBuilder.trainingText(input: $0.input, output: $0.output)
+            },
+            valid: pairSplit.valid.map {
+                PromptBuilder.trainingText(input: $0.input, output: $0.output)
+            })
+        let trainSet = split.train.isEmpty ? examples : split.train
         // Frigate's evaluate() divides by token count, so an empty validation set
         // would produce NaN. Reusing the training set is the honest fallback.
         let validSet = split.valid.isEmpty ? trainSet : split.valid
@@ -159,26 +169,27 @@ public struct StateTrainer {
             .write(to: directory.appendingPathComponent(LoRAArtifactName.manifest))
     }
 
-    /// Deterministic split: every nth example is held out, so the same dataset
-    /// always trains and validates on the same halves.
-    static func split(
-        _ examples: [String],
+    /// Deterministic split: every nth pair is held out, so the same dataset
+    /// always trains and validates on the same halves — and so the score the
+    /// caller computes afterwards is over examples training never saw.
+    public static func splitPairs(
+        _ pairs: [JSONPair],
         validationFraction: Double
-    ) -> (train: [String], valid: [String]) {
+    ) -> (train: [JSONPair], valid: [JSONPair]) {
         let fraction = min(max(validationFraction, 0), 0.9)
-        let validCount = Int((Double(examples.count) * fraction).rounded(.down))
-        guard validCount > 0, examples.count > 1 else { return (examples, []) }
-        let stride = max(2, examples.count / validCount)
-        var train: [String] = []
-        var valid: [String] = []
-        for (index, example) in examples.enumerated() {
+        let validCount = Int((Double(pairs.count) * fraction).rounded(.down))
+        guard validCount > 0, pairs.count > 1 else { return (pairs, []) }
+        let stride = max(2, pairs.count / validCount)
+        var train: [JSONPair] = []
+        var valid: [JSONPair] = []
+        for (index, pair) in pairs.enumerated() {
             if index % stride == 0 && valid.count < validCount {
-                valid.append(example)
+                valid.append(pair)
             } else {
-                train.append(example)
+                train.append(pair)
             }
         }
-        return (train.isEmpty ? examples : train, valid)
+        return (train.isEmpty ? pairs : train, valid)
     }
 }
 

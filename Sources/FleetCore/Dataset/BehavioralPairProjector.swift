@@ -9,9 +9,27 @@ public enum BehavioralPairProjector {
         case emptyQuery
     }
 
+    /// The lane Mary stamps on episodes she produced on her own initiative.
+    public static let proactiveLane = "proactive"
+
+    /// Whether a stored episode may become a training pair.
+    ///
+    /// Two rules, both load-bearing:
+    ///
+    /// - **Finished only.** A turn that was superseded or cancelled records
+    ///   what was interrupted, not what the person wanted done.
+    /// - **Not Mary's own.** Episodes on the `proactive` lane are the idle
+    ///   engine's own predictions, filed in the same group and with the same
+    ///   `completed` seal as a real turn. Training on them closes a loop:
+    ///   each generation learns from the last one's output rather than from
+    ///   the user, and the adapter drifts away from the behaviour it was
+    ///   supposed to copy. Mary's side filters these too; this is the half
+    ///   that holds when the corpus is read straight from Totem.
     public static func isTrainable(_ episode: JSONValue) -> Bool {
         let reason = episode["sealedReason"]?.stringValue ?? ""
-        if reason == "superseded" || reason == "cancelled" { return false }
+        guard reason == "completed" else { return false }
+        let lane = episode["provenance"]?["lane"]?.stringValue ?? ""
+        guard lane != proactiveLane else { return false }
         let targets = episode["abilityTargets"]?.elements ?? []
         return !targets.isEmpty
     }

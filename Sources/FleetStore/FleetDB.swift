@@ -202,6 +202,13 @@ public actor FleetDB {
             at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
 
         if manager.fileExists(atPath: destination.path) {
+            // KEEP THE GENERATION BEING REPLACED. Publishing used to overwrite
+            // in place, so a retrain that came out worse than the one before
+            // it could not be undone — the only copy of the good weights was
+            // the one just deleted.
+            let previous = previousAdapterDirectory(totemId: totemId, abilityId: abilityId)
+            try? manager.removeItem(at: previous)
+            try? manager.copyItem(at: destination, to: previous)
             _ = try manager.replaceItemAt(destination, withItemAt: staging)
         } else {
             try manager.moveItem(at: staging, to: destination)
@@ -226,6 +233,66 @@ public actor FleetDB {
             }
             registry.loras[cid] = published
             registry.namedSlots[key] = cid
+        }
+        return published
+    }
+
+    /// Where the generation this slot replaced is kept, so a bad adapter can
+    /// be undone. One deep: the point is recovery, not history.
+    public nonisolated func previousAdapterDirectory(
+        totemId: String, abilityId: String
+    ) -> URL {
+        namedAdapterDirectory(totemId: totemId, abilityId: abilityId)
+            .deletingLastPathComponent()
+            .appendingPathComponent("\(abilityId)\(Self.previousSuffix)")
+    }
+
+    static let previousSuffix = ".previous"
+
+    /// Record what the published adapter scored on pairs held out of its own
+    /// training. The number gates `ready`; see `LoRAEntry.passesReadyGate`.
+    public func setEvaluation(cid: String, exactMatch: Double?, cases: Int) async {
+        await registry.mutateAndFlush { registry in
+            registry.loras[cid]?.evalExactMatch = exactMatch
+            registry.loras[cid]?.evalCases = cases
+            registry.loras[cid]?.updatedAt = .now
+        }
+    }
+
+    /// Put the previous generation back. Returns nil when there is none —
+    /// the first generation of a slot has nothing behind it.
+    @discardableResult
+    public func rollbackNamedLoRA(totemId: String, abilityId: String) async throws -> LoRAEntry? {
+        let manager = FileManager.default
+        let previous = previousAdapterDirectory(totemId: totemId, abilityId: abilityId)
+        guard manager.fileExists(
+            atPath: previous.appendingPathComponent(LoRAArtifact.weights).path)
+        else { return nil }
+        let key = Self.namedSlotKey(totemId: totemId, abilityId: abilityId)
+        guard let currentCID = snapshot.namedSlots[key],
+              let current = snapshot.loras[currentCID]
+        else { return nil }
+
+        let live = namedAdapterDirectory(totemId: totemId, abilityId: abilityId)
+        let scratch = try makeStagingDirectory()
+        try? manager.removeItem(at: scratch)
+        // Three-way swap so a failure never leaves the slot without weights.
+        try manager.moveItem(at: live, to: scratch)
+        try manager.moveItem(at: previous, to: live)
+        try? manager.removeItem(at: scratch)
+
+        // The restored weights are the older generation. Its snapshot is on
+        // disk beside them; the registry entry is rebuilt from the current
+        // one so the slot keeps its label and its place in the library.
+        var restored = current
+        restored.generation = max(1, current.generation - 1)
+        restored.evalExactMatch = nil
+        restored.evalCases = 0
+        restored.updatedAt = .now
+        let published = restored
+        await registry.mutateAndFlush { registry in
+            registry.loras[currentCID] = published
+            registry.namedSlots[key] = currentCID
         }
         return published
     }
@@ -271,6 +338,10 @@ public actor FleetDB {
         try? FileManager.default.removeItem(at: adapterDirectory(cid: cid))
         if let entry {
             try? FileManager.default.removeItem(at: adapterDirectory(for: entry))
+            if let totemId = entry.totemId, let abilityId = entry.abilityId {
+                try? FileManager.default.removeItem(
+                    at: previousAdapterDirectory(totemId: totemId, abilityId: abilityId))
+            }
         }
         await registry.mutateAndFlush { registry in
             registry.loras.removeValue(forKey: cid)
@@ -509,6 +580,8 @@ public actor FleetDB {
     /// Totem ids are UUIDs, so reconcile must not treat those folders as the
     /// pre-rewrite UUID layout.
     nonisolated static func containsNamedSlot(_ url: URL) -> Bool {
+        // A kept previous generation counts: it lives beside the live slot
+        // under the same totem directory and holds real weights.
         guard let children = try? FileManager.default.contentsOfDirectory(
             at: url, includingPropertiesForKeys: [.isDirectoryKey])
         else { return false }

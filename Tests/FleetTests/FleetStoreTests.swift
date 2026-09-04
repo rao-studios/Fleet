@@ -374,6 +374,107 @@ final class FleetDBNamedSlotTests: StoreTestCase {
         XCTAssertEqual(weights, "gen-2")
     }
 
+    /// A retrain used to overwrite in place, so an adapter that came out
+    /// worse than the one before it could not be undone — the only copy of
+    /// the good weights was the one just deleted.
+    func testARetrainKeepsThePreviousGenerationOnDisk() async throws {
+        let db = FleetDB()
+        let totem = UUID().uuidString
+        let first = String(repeating: "1", count: 64)
+        let second = String(repeating: "2", count: 64)
+        _ = try await db.publishNamedLoRA(
+            totemId: totem, abilityId: "writing", cid: first,
+            from: try await makeStaging(db, weights: "gen-1"),
+            makeEntry: makeEntry(cid: first))
+        _ = try await db.publishNamedLoRA(
+            totemId: totem, abilityId: "writing", cid: second,
+            from: try await makeStaging(db, weights: "gen-2"),
+            makeEntry: makeEntry(cid: second))
+
+        let kept = try String(
+            contentsOf: db.previousAdapterDirectory(totemId: totem, abilityId: "writing")
+                .appendingPathComponent(LoRAArtifact.weights),
+            encoding: .utf8)
+        XCTAssertEqual(kept, "gen-1")
+    }
+
+    func testRollbackRestoresThePreviousWeightsAndDropsTheScore() async throws {
+        let db = FleetDB()
+        let totem = UUID().uuidString
+        let first = String(repeating: "1", count: 64)
+        let second = String(repeating: "2", count: 64)
+        _ = try await db.publishNamedLoRA(
+            totemId: totem, abilityId: "writing", cid: first,
+            from: try await makeStaging(db, weights: "gen-1"),
+            makeEntry: makeEntry(cid: first))
+        _ = try await db.publishNamedLoRA(
+            totemId: totem, abilityId: "writing", cid: second,
+            from: try await makeStaging(db, weights: "gen-2"),
+            makeEntry: makeEntry(cid: second))
+        await db.setEvaluation(cid: second, exactMatch: 0.1, cases: 8)
+
+        let restored = try await db.rollbackNamedLoRA(totemId: totem, abilityId: "writing")
+
+        XCTAssertNotNil(restored)
+        XCTAssertEqual(restored?.generation, 1)
+        XCTAssertNil(restored?.evalExactMatch)
+        let live = try String(
+            contentsOf: db.namedAdapterDirectory(totemId: totem, abilityId: "writing")
+                .appendingPathComponent(LoRAArtifact.weights),
+            encoding: .utf8)
+        XCTAssertEqual(live, "gen-1")
+    }
+
+    func testRollbackOnAFirstGenerationSlotDoesNothing() async throws {
+        let db = FleetDB()
+        let totem = UUID().uuidString
+        let cid = String(repeating: "c", count: 64)
+        _ = try await db.publishNamedLoRA(
+            totemId: totem, abilityId: "writing", cid: cid,
+            from: try await makeStaging(db), makeEntry: makeEntry(cid: cid))
+
+        let restored = try await db.rollbackNamedLoRA(totemId: totem, abilityId: "writing")
+
+        XCTAssertNil(restored)
+        XCTAssertTrue(db.hasWeights(cid: cid))
+    }
+
+    func testAScoreSurvivesAReadBack() async throws {
+        let db = FleetDB()
+        let totem = UUID().uuidString
+        let cid = String(repeating: "e", count: 64)
+        _ = try await db.publishNamedLoRA(
+            totemId: totem, abilityId: "writing", cid: cid,
+            from: try await makeStaging(db), makeEntry: makeEntry(cid: cid))
+
+        await db.setEvaluation(cid: cid, exactMatch: 0.75, cases: 12)
+
+        let entry = await db.lora(totemId: totem, abilityId: "writing")
+        XCTAssertEqual(entry?.evalExactMatch, 0.75)
+        XCTAssertEqual(entry?.evalCases, 12)
+        XCTAssertTrue(entry?.passesReadyGate == true)
+    }
+
+    func testDeletingASlotAlsoRemovesItsKeptGeneration() async throws {
+        let db = FleetDB()
+        let totem = UUID().uuidString
+        let first = String(repeating: "1", count: 64)
+        let second = String(repeating: "2", count: 64)
+        _ = try await db.publishNamedLoRA(
+            totemId: totem, abilityId: "writing", cid: first,
+            from: try await makeStaging(db, weights: "gen-1"),
+            makeEntry: makeEntry(cid: first))
+        _ = try await db.publishNamedLoRA(
+            totemId: totem, abilityId: "writing", cid: second,
+            from: try await makeStaging(db, weights: "gen-2"),
+            makeEntry: makeEntry(cid: second))
+
+        await db.deleteLoRA(cid: second)
+
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: db.previousAdapterDirectory(totemId: totem, abilityId: "writing").path))
+    }
+
     func testReconcileKeepsNamedSlotTrees() async throws {
         let db = FleetDB()
         let totem = UUID().uuidString

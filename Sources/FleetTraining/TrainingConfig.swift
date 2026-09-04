@@ -48,6 +48,33 @@ public struct TrainingConfig: Sendable, Codable, Equatable {
     }
 
     public static let defaultModelId = "mlx-community/Qwen3-0.6B-4bit"
+
+    /// Knobs sized to the corpus in hand.
+    ///
+    /// The fixed defaults were written for a demo dataset and are wrong for a
+    /// behavioural one: 200 iterations at batch 4 over ~24 pairs is about
+    /// thirty-six passes over every example, which memorises them, and 1e-5
+    /// is an order of magnitude below the usual LoRA rate, so most of those
+    /// passes barely move the adapter. Aim for a handful of epochs at a rate
+    /// that actually learns, and hold the ends so a tiny corpus still gets
+    /// enough steps and a large one does not run for an hour.
+    public static func forCorpus(
+        pairCount: Int,
+        modelId: String = TrainingConfig.defaultModelId,
+        batchSize: Int = 4,
+        epochs: Int = 4
+    ) -> TrainingConfig {
+        let steps = max(1, pairCount / max(1, batchSize)) * max(1, epochs)
+        let iterations = min(max(steps, 40), 400)
+        return TrainingConfig(
+            modelId: modelId,
+            iterations: iterations,
+            batchSize: batchSize,
+            learningRate: 1e-4,
+            validationFraction: 0.15,
+            stepsPerReport: max(1, iterations / 20),
+            stepsPerEval: max(1, iterations / 4))
+    }
 }
 
 /// Progress from a training run, in Fleet's own vocabulary.
@@ -68,6 +95,8 @@ public enum TrainingProgress: Sendable {
     )
     case validation(iteration: Int, loss: Float, seconds: Double)
     case checkpointed(iteration: Int)
+    /// Scored against pairs held out of training, after publishing.
+    case evaluated(exactMatch: Double, cases: Int)
     /// Weights and metadata are written; the caller publishes them under `cid`.
     case finished(cid: String, adapterDirectory: URL)
 }

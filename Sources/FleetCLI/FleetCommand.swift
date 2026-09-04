@@ -16,7 +16,7 @@ struct FleetCommand: AsyncParsableCommand {
             """,
         subcommands: [
             Datasets.self, Train.self, Test.self, Loras.self, Groups.self, Smoke.self,
-            Serve.self,
+            Serve.self, Rollback.self,
         ]
     )
 }
@@ -243,6 +243,10 @@ struct Train: AsyncParsableCommand {
                 print("  iter \(iteration)  validation loss \(String(format: "%.4f", loss))")
             case .checkpointed(let iteration):
                 print("  checkpoint at \(iteration)")
+            case .evaluated(let exactMatch, let cases):
+                print(
+                    "  scored \(Int((exactMatch * 100).rounded()))% exact "
+                        + "on \(cases) held-out pair\(cases == 1 ? "" : "s")")
             case .finished(let cid, let directory):
                 print("Trained LoRA \(ContentID.short(cid))")
                 print("  \(directory.path)")
@@ -393,6 +397,30 @@ struct Loras: AsyncParsableCommand {
             print("Deleted \(ContentID.short(resolved)).")
             await service.shutdown()
         }
+    }
+}
+
+/// Undo a retrain that came out worse than what it replaced.
+struct Rollback: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "rollback",
+        abstract: "Put a named slot's previous adapter generation back.")
+
+    @Option(help: "Totem id owning the slot.") var totem: String
+    @Option(help: "Ability id of the slot.") var ability: String
+
+    func run() async throws {
+        let service = await makeService()
+        defer { Task { await service.shutdown() } }
+        guard let restored = try await service.rollback(
+            totemId: totem, abilityId: ability)
+        else {
+            print("No previous generation kept for \(totem)/\(ability).")
+            return
+        }
+        print(
+            "Rolled \(ability) back to generation \(restored.generation). "
+                + "It is unscored until it is trained again.")
     }
 }
 

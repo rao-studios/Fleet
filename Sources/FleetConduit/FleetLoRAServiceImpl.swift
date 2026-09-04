@@ -49,13 +49,33 @@ public final class FleetLoRAServiceImpl: Fleet_V1_FleetLoRA.SimpleServiceProtoco
         context: GRPCCore.ServerContext
     ) async throws {
         let key = FleetDB.namedSlotKey(totemId: request.totemID, abilityId: request.abilityID)
-        training.withLock { _ = $0.insert(key) }
+        // ONE RUN PER SLOT. The insert's result is the claim: two concurrent
+        // Train calls for the same ability would each load a base model and
+        // then race to publish into the same directory. The loser's weights
+        // and the winner's registry entry would disagree.
+        let claimed = training.withLock { $0.insert(key).inserted }
+        guard claimed else {
+            try await response.write(
+                progress(stage: "error", message: "already training \(request.abilityID)"))
+            return
+        }
         defer { training.withLock { _ = $0.remove(key) } }
 
         do {
             let pairs = try await collectPairs(request)
             guard !pairs.isEmpty else {
                 try await response.write(progress(stage: "error", message: "no trainable pairs"))
+                return
+            }
+            // The CLI refuses an unfit dataset before spending a GPU hour on
+            // it; this path used to walk straight past the same report.
+            let report = await service.validationReport(pairs: pairs)
+            for warning in report.warnings {
+                try await response.write(progress(stage: "preparing", message: warning))
+            }
+            guard report.isTrainable else {
+                try await response.write(
+                    progress(stage: "error", message: report.summary))
                 return
             }
             let dataset = try await service.createDataset(
@@ -67,7 +87,7 @@ public final class FleetLoRAServiceImpl: Fleet_V1_FleetLoRA.SimpleServiceProtoco
                 datasetId: dataset.id,
                 totemId: request.totemID,
                 abilityId: request.abilityID,
-                config: TrainingConfig(modelId: modelId))
+                config: .forCorpus(pairCount: pairs.count, modelId: modelId))
             for try await event in stream {
                 try await response.write(Self.proto(event))
             }
@@ -126,7 +146,10 @@ public final class FleetLoRAServiceImpl: Fleet_V1_FleetLoRA.SimpleServiceProtoco
         slot.generation = Int32(entry.generation)
         slot.pairCount = Int32(entry.pairCount)
         slot.trainedAtUnix = Int64(entry.updatedAt.timeIntervalSince1970)
-        slot.ready = await service.hasWeights(cid: entry.cid) && !isTraining
+        // READY MEANS GOOD ENOUGH TO ACT THROUGH, not merely present.
+        slot.ready = await service.hasWeights(cid: entry.cid)
+            && !isTraining
+            && entry.passesReadyGate
         slot.artifactPath = await service.adapterDirectory(for: entry).path
         slot.cid = entry.cid
         slot.modelID = entry.modelId
@@ -162,6 +185,10 @@ public final class FleetLoRAServiceImpl: Fleet_V1_FleetLoRA.SimpleServiceProtoco
         case .checkpointed(let iteration):
             progress.stage = "checkpoint"
             progress.iteration = Int32(iteration)
+        case .evaluated(let exactMatch, let cases):
+            progress.stage = "evaluated"
+            progress.message =
+                "\(Int((exactMatch * 100).rounded()))% exact of \(cases) held out"
         case .finished(let cid, let directory):
             progress.stage = "finished"
             progress.message = cid
