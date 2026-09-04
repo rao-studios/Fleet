@@ -1,5 +1,6 @@
 import Conduit
 import FleetCore
+import FleetInference
 import FleetService
 import FleetStore
 import FleetTraining
@@ -9,10 +10,11 @@ import os
 
 public final class FleetLoRAServiceImpl: Fleet_V1_FleetLoRA.SimpleServiceProtocol, Sendable {
     private let service: FleetService
-    private let corpus: TotemCorpusClient
-    private let training = OSAllocatedUnfairLock<Set<String>>(initialState: [])
+    private let corpus: ThreadCorpusClient
+    /// Slot keys with a train run in flight. Internal so a test can seed it.
+    let training = OSAllocatedUnfairLock<Set<String>>(initialState: [])
 
-    public init(service: FleetService, corpus: TotemCorpusClient) {
+    public init(service: FleetService, corpus: ThreadCorpusClient) {
         self.service = service
         self.corpus = corpus
     }
@@ -21,7 +23,7 @@ public final class FleetLoRAServiceImpl: Fleet_V1_FleetLoRA.SimpleServiceProtoco
         request: Fleet_V1_ListAdaptersRequest,
         context: GRPCCore.ServerContext
     ) async throws -> Fleet_V1_ListAdaptersResponse {
-        let entries = await service.loras(totemId: request.totemID)
+        let entries = await service.loras(threadId: request.threadID)
         var response = Fleet_V1_ListAdaptersResponse()
         response.slots = []
         for entry in entries {
@@ -34,7 +36,7 @@ public final class FleetLoRAServiceImpl: Fleet_V1_FleetLoRA.SimpleServiceProtoco
         request: Fleet_V1_AdapterStatusRequest,
         context: GRPCCore.ServerContext
     ) async throws -> Fleet_V1_LoRASlot {
-        if let entry = await service.lora(totemId: request.totemID, abilityId: request.abilityID) {
+        if let entry = await service.lora(threadId: request.threadID, abilityId: request.abilityID) {
             return await slot(from: entry)
         }
         var empty = Fleet_V1_LoRASlot()
@@ -48,8 +50,17 @@ public final class FleetLoRAServiceImpl: Fleet_V1_FleetLoRA.SimpleServiceProtoco
         response: GRPCCore.RPCWriter<Fleet_V1_TrainProgress>,
         context: GRPCCore.ServerContext
     ) async throws {
-        let key = FleetDB.namedSlotKey(totemId: request.totemID, abilityId: request.abilityID)
-        training.withLock { _ = $0.insert(key) }
+        let key = FleetDB.namedSlotKey(threadId: request.threadID, abilityId: request.abilityID)
+        // ONE RUN PER SLOT. The insert's result is the claim: two concurrent
+        // Train calls for the same ability would each load a base model and
+        // then race to publish into the same directory. The loser's weights
+        // and the winner's registry entry would disagree.
+        let claimed = training.withLock { $0.insert(key).inserted }
+        guard claimed else {
+            try await response.write(
+                progress(stage: "error", message: "already training \(request.abilityID)"))
+            return
+        }
         defer { training.withLock { _ = $0.remove(key) } }
 
         do {
@@ -58,16 +69,27 @@ public final class FleetLoRAServiceImpl: Fleet_V1_FleetLoRA.SimpleServiceProtoco
                 try await response.write(progress(stage: "error", message: "no trainable pairs"))
                 return
             }
+            // The CLI refuses an unfit dataset before spending a GPU hour on
+            // it; this path used to walk straight past the same report.
+            let report = await service.validationReport(pairs: pairs)
+            for warning in report.warnings {
+                try await response.write(progress(stage: "preparing", message: warning))
+            }
+            guard report.isTrainable else {
+                try await response.write(
+                    progress(stage: "error", message: report.summary))
+                return
+            }
             let dataset = try await service.createDataset(
-                name: "life · \(request.abilityID) · \(request.totemID)",
+                name: "life · \(request.abilityID) · \(request.threadID)",
                 pairs: pairs)
             let modelId = request.modelID.isEmpty
                 ? TrainingConfig.defaultModelId : request.modelID
             let stream = try await service.trainNamed(
                 datasetId: dataset.id,
-                totemId: request.totemID,
+                threadId: request.threadID,
                 abilityId: request.abilityID,
-                config: TrainingConfig(modelId: modelId))
+                config: .forCorpus(pairCount: pairs.count, modelId: modelId))
             for try await event in stream {
                 try await response.write(Self.proto(event))
             }
@@ -77,13 +99,77 @@ public final class FleetLoRAServiceImpl: Fleet_V1_FleetLoRA.SimpleServiceProtoco
         }
     }
 
+    /// One gated completion through a ready slot. Mary's Life engine dials
+    /// this instead of loading the base model itself.
+    public func complete(
+        request: Fleet_V1_CompleteRequest,
+        context: GRPCCore.ServerContext
+    ) async throws -> Fleet_V1_CompleteResponse {
+        guard let entry = await service.lora(threadId: request.threadID, abilityId: request.abilityID)
+        else {
+            throw RPCError(
+                code: .notFound,
+                message: "no adapter for \(request.abilityID) on \(request.threadID)")
+        }
+        let key = FleetDB.namedSlotKey(threadId: request.threadID, abilityId: request.abilityID)
+        let isTraining = training.withLock { $0.contains(key) }
+        let input = try Self.admit(
+            entryCID: entry.cid,
+            isTraining: isTraining,
+            requestedCID: request.cid,
+            inputJSON: request.inputJson,
+            abilityID: request.abilityID)
+        let result: GatedResult
+        do {
+            result = try await service.complete(cid: entry.cid, input: input)
+        } catch let error as FleetServiceError {
+            throw RPCError(code: .failedPrecondition, message: error.description)
+        }
+        return Self.response(from: result, cid: entry.cid)
+    }
+
+    /// The refusals, in order, before any GPU work: training in flight, a
+    /// stale cid pin, an unparsable input. Pure so tests need no server.
+    static func admit(
+        entryCID: String,
+        isTraining: Bool,
+        requestedCID: String,
+        inputJSON: String,
+        abilityID: String
+    ) throws -> JSONValue {
+        guard !isTraining else {
+            throw RPCError(
+                code: .failedPrecondition, message: "\(abilityID) is training")
+        }
+        guard requestedCID.isEmpty || requestedCID == entryCID else {
+            throw RPCError(
+                code: .failedPrecondition,
+                message: "adapter for \(abilityID) is now \(entryCID), not \(requestedCID)")
+        }
+        do {
+            return try JSONParser.parse(inputJSON)
+        } catch {
+            throw RPCError(code: .invalidArgument, message: "input_json: \(error)")
+        }
+    }
+
+    static func response(from result: GatedResult, cid: String) -> Fleet_V1_CompleteResponse {
+        var response = Fleet_V1_CompleteResponse()
+        response.outputJson = JSONCanonical.serialize(result.json)
+        response.rawText = result.rawText
+        response.forcedFraction = result.forcedFraction
+        response.promptTokens = Int32(result.promptTokenCount)
+        response.cid = cid
+        return response
+    }
+
     private func collectPairs(_ request: Fleet_V1_TrainRequest) async throws -> [JSONPair] {
         if !request.pairs.isEmpty {
             return try request.pairs.map { pair in
                 JSONPair(
                     input: try JSONParser.parse(pair.inputJson),
                     output: try JSONParser.parse(pair.outputJson),
-                    provenance: .init(origin: .totem, totemId: request.totemID))
+                    provenance: .init(origin: .thread, threadId: request.threadID))
             }
         }
         guard !request.ownerID.isEmpty else { return [] }
@@ -101,7 +187,7 @@ public final class FleetLoRAServiceImpl: Fleet_V1_FleetLoRA.SimpleServiceProtoco
                     from: parsed,
                     documentId: document.id,
                     groupId: document.groupID,
-                    totemId: request.totemID)
+                    threadId: request.threadID)
             else { continue }
             pairs.append(pair)
         }
@@ -119,14 +205,17 @@ public final class FleetLoRAServiceImpl: Fleet_V1_FleetLoRA.SimpleServiceProtoco
 
     private func slot(from entry: LoRAEntry) async -> Fleet_V1_LoRASlot {
         let key = FleetDB.namedSlotKey(
-            totemId: entry.totemId ?? "", abilityId: entry.abilityId ?? "")
+            threadId: entry.threadId ?? "", abilityId: entry.abilityId ?? "")
         let isTraining = training.withLock { $0.contains(key) }
         var slot = Fleet_V1_LoRASlot()
         slot.abilityID = entry.abilityId ?? ""
         slot.generation = Int32(entry.generation)
         slot.pairCount = Int32(entry.pairCount)
         slot.trainedAtUnix = Int64(entry.updatedAt.timeIntervalSince1970)
-        slot.ready = await service.hasWeights(cid: entry.cid) && !isTraining
+        // READY MEANS GOOD ENOUGH TO ACT THROUGH, not merely present.
+        slot.ready = await service.hasWeights(cid: entry.cid)
+            && !isTraining
+            && entry.passesReadyGate
         slot.artifactPath = await service.adapterDirectory(for: entry).path
         slot.cid = entry.cid
         slot.modelID = entry.modelId
@@ -162,6 +251,10 @@ public final class FleetLoRAServiceImpl: Fleet_V1_FleetLoRA.SimpleServiceProtoco
         case .checkpointed(let iteration):
             progress.stage = "checkpoint"
             progress.iteration = Int32(iteration)
+        case .evaluated(let exactMatch, let cases):
+            progress.stage = "evaluated"
+            progress.message =
+                "\(Int((exactMatch * 100).rounded()))% exact of \(cases) held out"
         case .finished(let cid, let directory):
             progress.stage = "finished"
             progress.message = cid

@@ -7,15 +7,15 @@ public struct SourceProvenance: Sendable, Codable, Equatable {
         case manual
         case file
         case mock
-        case totem
+        case thread
     }
 
     public var origin: Origin
     public var ownerId: String?
-    public var totemId: String?
+    public var threadId: String?
     public var documentId: String?
     public var groupId: String?
-    /// Indices into a Totem document's ordered `texts` array. Conduit's document
+    /// Indices into a Thread document's ordered `texts` array. Conduit's document
     /// API returns partition texts in stored order without per-partition ids, so
     /// position is the stable address available to us.
     public var textIndices: [Int]
@@ -24,7 +24,7 @@ public struct SourceProvenance: Sendable, Codable, Equatable {
     public init(
         origin: Origin,
         ownerId: String? = nil,
-        totemId: String? = nil,
+        threadId: String? = nil,
         documentId: String? = nil,
         groupId: String? = nil,
         textIndices: [Int] = [],
@@ -32,7 +32,7 @@ public struct SourceProvenance: Sendable, Codable, Equatable {
     ) {
         self.origin = origin
         self.ownerId = ownerId
-        self.totemId = totemId
+        self.threadId = threadId
         self.documentId = documentId
         self.groupId = groupId
         self.textIndices = textIndices

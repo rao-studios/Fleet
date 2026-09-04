@@ -3,6 +3,7 @@ import Foundation
 import MLX
 import MLXLLM
 import MLXLMCommon
+import FrigateBridge
 
 /// The result of a gated generation.
 public struct GatedResult: Sendable {
@@ -165,7 +166,8 @@ public actor StructuredSession {
 
     private func loadedContext() async throws -> ModelContext {
         if let context { return context }
-        let ctx = try await loadModel(id: modelId)
+        let ctx = try await loadModel(
+            from: HubDownloader(), using: HubTokenizerLoader(), id: modelId)
         if let adapterDirectory {
             let container = try LoRAContainer.from(directory: adapterDirectory)
             try container.load(into: ctx.model)

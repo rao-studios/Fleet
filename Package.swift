@@ -13,7 +13,7 @@
 //   FleetTraining  StateDataset -> Frigate LoRATrain.train -> adapter        (MLX/Frigate)
 //   FleetInference schema-gated constrained decoding over a base + LoRA      (MLX/Frigate)
 //   FleetService   the orchestration facade the app and CLI both drive
-//   FleetConduit   Fleet as a Conduit mothership Totems dial into            (gRPC)
+//   FleetConduit   Fleet as a Conduit mothership Threads dial into            (gRPC)
 //   Fleet          umbrella that re-exports the above
 //   FleetCLI       the `fleet` executable
 
@@ -76,7 +76,7 @@ let package = Package(
                 .product(name: "MLXLLM", package: "Frigate"),
                 .product(name: "MLXLMCommon", package: "Frigate"),
                 .product(name: "MLX", package: "Frigate"),
-                .product(name: "FrigateTokenizers", package: "Frigate"),
+                .product(name: "FrigateBridge", package: "Frigate"),
             ],
             swiftSettings: v5
         ),
@@ -88,7 +88,7 @@ let package = Package(
                 .product(name: "MLXLMCommon", package: "Frigate"),
                 .product(name: "MLXOptimizers", package: "Frigate"),
                 .product(name: "MLX", package: "Frigate"),
-                .product(name: "FrigateTokenizers", package: "Frigate"),
+                .product(name: "FrigateBridge", package: "Frigate"),
             ],
             swiftSettings: v5
         ),

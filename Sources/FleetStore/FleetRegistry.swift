@@ -21,9 +21,14 @@ public struct LoRAEntry: Sendable, Codable, Identifiable, Equatable {
     public var updatedAt: Date
     /// Incremented each time this CID is retrained — same inputs, evolved outputs.
     public var generation: Int
-    /// Named-slot addressing: one LoRA per totem × ability. Nil for CID-only smoke LoRAs.
-    public var totemId: String?
+    /// Named-slot addressing: one LoRA per thread × ability. Nil for CID-only smoke LoRAs.
+    public var threadId: String?
     public var abilityId: String?
+    /// Share of held-out pairs the published adapter reproduced exactly.
+    /// Nil means never scored — an entry written before scoring existed.
+    public var evalExactMatch: Double?
+    /// How many held-out pairs that score is over.
+    public var evalCases: Int
 
     public var id: String { cid }
 
@@ -42,8 +47,10 @@ public struct LoRAEntry: Sendable, Codable, Identifiable, Equatable {
         createdAt: Date = .now,
         updatedAt: Date = .now,
         generation: Int = 1,
-        totemId: String? = nil,
-        abilityId: String? = nil
+        threadId: String? = nil,
+        abilityId: String? = nil,
+        evalExactMatch: Double? = nil,
+        evalCases: Int = 0
     ) {
         self.cid = cid
         self.label = label
@@ -59,8 +66,36 @@ public struct LoRAEntry: Sendable, Codable, Identifiable, Equatable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.generation = generation
-        self.totemId = totemId
+        self.threadId = threadId
         self.abilityId = abilityId
+        self.evalExactMatch = evalExactMatch
+        self.evalCases = evalCases
+    }
+
+    /// The floor a freshly trained adapter must clear before anything is
+    /// allowed to act through it. Overridable so `fleet smoke` and
+    /// experiments can lower it deliberately rather than by accident.
+    public static let readyMinimumExactMatch: Double = {
+        if let raw = ProcessInfo.processInfo.environment["FLEET_READY_MIN_EXACT"],
+           let value = Double(raw)
+        { return value }
+        return 0.5
+    }()
+
+    /// Whether this adapter is good enough to be reached for.
+    ///
+    /// PIN: A NIL SCORE PASSES. Entries written before scoring existed have
+    /// no number, and refusing those would silently retire every adapter
+    /// already in the library. Every new run writes a score, so the gate
+    /// applies to exactly the adapters it can judge.
+    public var passesReadyGate: Bool {
+        (evalExactMatch ?? 1) >= Self.readyMinimumExactMatch
+    }
+
+    /// `72% of 11` — the sentence a monitor shows beside a slot.
+    public var evalSummary: String? {
+        guard let evalExactMatch else { return nil }
+        return "\(Int((evalExactMatch * 100).rounded()))% of \(evalCases)"
     }
 
     public var shortCID: String { ContentID.short(cid) }
@@ -88,8 +123,10 @@ public struct LoRAEntry: Sendable, Codable, Identifiable, Equatable {
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? .now
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? .now
         generation = try container.decodeIfPresent(Int.self, forKey: .generation) ?? 1
-        totemId = try container.decodeIfPresent(String.self, forKey: .totemId)
+        threadId = try container.decodeIfPresent(String.self, forKey: .threadId)
         abilityId = try container.decodeIfPresent(String.self, forKey: .abilityId)
+        evalExactMatch = try container.decodeIfPresent(Double.self, forKey: .evalExactMatch)
+        evalCases = try container.decodeIfPresent(Int.self, forKey: .evalCases) ?? 0
     }
 }
 
@@ -195,7 +232,7 @@ public struct FleetRegistry: Sendable, Codable {
     /// cid → group ids, kept sorted.
     public var loraGroups: [String: [String]] = [:]
     public var datasets: [UUID: DatasetEntry] = [:]
-    /// `"totemId|abilityId"` → cid. The named slot is the user-facing identity;
+    /// `"threadId|abilityId"` → cid. The named slot is the user-facing identity;
     /// the CID remains provenance on the entry.
     public var namedSlots: [String: String] = [:]
 

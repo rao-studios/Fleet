@@ -1,3 +1,4 @@
+import Fleet
 import SwiftUI
 
 struct ContentView: View {
@@ -15,7 +16,7 @@ struct ContentView: View {
         .preferredColorScheme(.light)  // palette is light-only; lock it so default
         .task {                         // text/controls (incl. the segmented selector) stay readable
             await appState.start()             // reconcile the store, then load the library
-            await appState.startTotemServer()  // auto-start: the Fleet Conduit server listens by default
+            await appState.startThreadServer()  // auto-start: the Fleet Conduit server listens by default
         }
     }
 
@@ -62,7 +63,7 @@ struct ContentView: View {
 
             Spacer()
 
-            Text("fleet-db · ~/Documents/fleet-db")
+            Text("fleet-db · \(FleetDB.root.path)")
                 .font(.fleetMono(8.5))
                 .foregroundStyle(Color.fleetInk.opacity(0.3))
                 .padding(12)

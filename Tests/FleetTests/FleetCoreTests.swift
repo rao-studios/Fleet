@@ -328,4 +328,30 @@ final class BehavioralPairProjectorTests: XCTestCase {
         let episode = try JSONParser.parse(#"{"input":{"query":"x"},"abilityTargets":[{}],"sealedReason":"superseded"}"#)
         XCTAssertFalse(BehavioralPairProjector.isTrainable(episode))
     }
+
+    func testUnsealedEpisodesAreNotTrainable() throws {
+        let episode = try JSONParser.parse(#"{"input":{"query":"x"},"abilityTargets":[{}]}"#)
+        XCTAssertFalse(BehavioralPairProjector.isTrainable(episode))
+    }
+
+    /// Mary's idle engine seals its own episodes `completed` and files them
+    /// in the same group as a real turn. Training on those closes a loop —
+    /// each generation learns from the last one instead of from the user.
+    func testMarysOwnProactiveEpisodesAreNotTrainable() throws {
+        let episode = try JSONParser.parse("""
+            {"input":{"query":"idle"},"abilityTargets":[{}],
+             "provenance":{"engine":"local","lane":"proactive"},
+             "sealedReason":"completed"}
+            """)
+        XCTAssertFalse(BehavioralPairProjector.isTrainable(episode))
+    }
+
+    func testAnOrdinaryTurnOnAnotherLaneStaysTrainable() throws {
+        let episode = try JSONParser.parse("""
+            {"input":{"query":"type this"},"abilityTargets":[{}],
+             "provenance":{"engine":"local","lane":"dual"},
+             "sealedReason":"completed"}
+            """)
+        XCTAssertTrue(BehavioralPairProjector.isTrainable(episode))
+    }
 }

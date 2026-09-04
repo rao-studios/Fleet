@@ -11,14 +11,14 @@ public enum FleetLoRAServer {
     public static func serve(
         httpPort: Int = defaultHTTPPort,
         grpcPort: Int = defaultGRPCPort,
-        totemHost: String = "127.0.0.1",
-        totemPort: Int = 9090
+        threadHost: String = "127.0.0.1",
+        threadPort: Int = 9090
     ) async throws {
         let service = FleetService()
         _ = await service.start()
         let impl = FleetLoRAServiceImpl(
             service: service,
-            corpus: TotemCorpusClient(host: totemHost, port: totemPort))
+            corpus: ThreadCorpusClient(host: threadHost, port: threadPort))
         let health = FleetHealthServer()
         try health.start(port: httpPort)
         let transport = HTTP2ServerTransport.Posix(

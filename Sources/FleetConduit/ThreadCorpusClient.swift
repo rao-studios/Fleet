@@ -3,9 +3,9 @@ import Foundation
 import GRPCCore
 import GRPCNIOTransportHTTP2
 
-/// One-shot HTTP/2 calls against the local Totem node's TotemLibrary (:9090).
-/// Fleet pulls a training corpus itself — Totems no longer dial into Fleet.
-public actor TotemCorpusClient {
+/// One-shot HTTP/2 calls against the local Thread node's ThreadLibrary (:9090).
+/// Fleet pulls a training corpus itself — Threads no longer dial into Fleet.
+public actor ThreadCorpusClient {
     private let host: String
     private let port: Int
 
@@ -20,8 +20,8 @@ public actor TotemCorpusClient {
         documentIDPrefix: String = "mary-behavior-",
         afterID: String = "",
         limit: Int = 200
-    ) async throws -> (documents: [Totem_V1_TotemDocumentContent], hasMore: Bool) {
-        var request = Totem_V1_TotemExportCorpusRequest()
+    ) async throws -> (documents: [Thread_V1_ThreadDocumentContent], hasMore: Bool) {
+        var request = Thread_V1_ThreadExportCorpusRequest()
         request.ownerID = ownerID
         request.groupIds = groupIDs
         request.documentIDPrefix = documentIDPrefix
@@ -30,7 +30,7 @@ public actor TotemCorpusClient {
         var options = GRPCCore.CallOptions.defaults
         options.timeout = .seconds(60)
         return try await withGRPCClient(transport: try makeTransport()) { client in
-            let stub = Totem_V1_TotemLibrary.Client(wrapping: client)
+            let stub = Thread_V1_ThreadLibrary.Client(wrapping: client)
             let response = try await stub.exportCorpus(request, options: options)
             return (response.documents, response.hasMore_p)
         }
@@ -41,8 +41,8 @@ public actor TotemCorpusClient {
         ownerID: String,
         groupIDs: [String] = [],
         documentIDPrefix: String = "mary-behavior-"
-    ) async throws -> [Totem_V1_TotemDocumentContent] {
-        var all: [Totem_V1_TotemDocumentContent] = []
+    ) async throws -> [Thread_V1_ThreadDocumentContent] {
+        var all: [Thread_V1_ThreadDocumentContent] = []
         var after = ""
         for _ in 0..<50 {
             let page = try await exportCorpus(

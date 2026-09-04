@@ -233,10 +233,10 @@ public actor FleetService {
         }
     }
 
-    /// Train a LoRA and publish it under `loras/<totemId>/<abilityId>/`.
+    /// Train a LoRA and publish it under `loras/<threadId>/<abilityId>/`.
     public func trainNamed(
         datasetId: UUID,
-        totemId: String,
+        threadId: String,
         abilityId: String,
         config: TrainingConfig = TrainingConfig()
     ) async throws -> AsyncThrowingStream<TrainingProgress, Error> {
@@ -248,6 +248,10 @@ public actor FleetService {
         let staging = try db.makeStagingDirectory()
         let trainer = StateTrainer(config: config)
         let db = self.db
+        // The same split the trainer uses, so the score is over examples the
+        // adapter has genuinely never seen.
+        let heldOut = StateTrainer.splitPairs(
+            dataset.pairs, validationFraction: config.validationFraction).valid
 
         return AsyncThrowingStream { continuation in
             let task = Task {
@@ -257,7 +261,7 @@ public actor FleetService {
                     {
                         if case .finished(let cid, _) = progress {
                             let entry = try await db.publishNamedLoRA(
-                                totemId: totemId,
+                                threadId: threadId,
                                 abilityId: abilityId,
                                 cid: cid,
                                 from: staging
@@ -274,11 +278,28 @@ public actor FleetService {
                                     scale: config.scale,
                                     numLayers: config.numLayers,
                                     iterations: config.iterations,
-                                    totemId: totemId,
+                                    threadId: threadId,
                                     abilityId: abilityId
                                 )
                             }
                             await self.invalidateSession(cid: entry.cid)
+                            // SCORE IT BEFORE ANYONE ACTS THROUGH IT. Nothing
+                            // used to stand between "training finished" and
+                            // "ready": a run that learned nothing published
+                            // and was reached for exactly like a good one.
+                            let summary = await self.score(
+                                cid: entry.cid,
+                                heldOut: heldOut,
+                                fallback: dataset.pairs)
+                            await db.setEvaluation(
+                                cid: entry.cid,
+                                exactMatch: summary?.accuracy,
+                                cases: summary?.total ?? 0)
+                            if let summary {
+                                continuation.yield(
+                                    .evaluated(
+                                        exactMatch: summary.accuracy, cases: summary.total))
+                            }
                             continuation.yield(
                                 .finished(
                                     cid: entry.cid,
@@ -300,6 +321,17 @@ public actor FleetService {
                 }
             }
         }
+    }
+
+    /// Exact-match accuracy over pairs training held out. A failure to score
+    /// is not a failure to publish — it leaves the entry unscored, which the
+    /// ready gate reads as "cannot judge" rather than "bad".
+    private func score(
+        cid: String, heldOut: [JSONPair], fallback: [JSONPair]
+    ) async -> EvaluationSummary? {
+        let pairs = heldOut.isEmpty ? fallback : heldOut
+        guard !pairs.isEmpty else { return nil }
+        return try? await evaluate(cid: cid, pairs: pairs)
     }
 
     // MARK: - Testing
@@ -404,12 +436,12 @@ public actor FleetService {
         await db.lora(cid: cid)
     }
 
-    public func loras(totemId: String) async -> [LoRAEntry] {
-        await db.loras(totemId: totemId)
+    public func loras(threadId: String) async -> [LoRAEntry] {
+        await db.loras(threadId: threadId)
     }
 
-    public func lora(totemId: String, abilityId: String) async -> LoRAEntry? {
-        await db.lora(totemId: totemId, abilityId: abilityId)
+    public func lora(threadId: String, abilityId: String) async -> LoRAEntry? {
+        await db.lora(threadId: threadId, abilityId: abilityId)
     }
 
     public func schema(cid: String) -> SchemaTemplate? {
@@ -435,6 +467,16 @@ public actor FleetService {
     public func deleteLoRA(cid: String) async {
         invalidateSession(cid: cid)
         await db.deleteLoRA(cid: cid)
+    }
+
+    /// Put a named slot's previous generation back and forget the session
+    /// built on the one being replaced.
+    @discardableResult
+    public func rollback(threadId: String, abilityId: String) async throws -> LoRAEntry? {
+        if let current = await db.lora(threadId: threadId, abilityId: abilityId) {
+            invalidateSession(cid: current.cid)
+        }
+        return try await db.rollbackNamedLoRA(threadId: threadId, abilityId: abilityId)
     }
 
     @discardableResult

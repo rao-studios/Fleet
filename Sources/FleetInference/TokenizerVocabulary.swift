@@ -1,6 +1,6 @@
 import FleetCore
 import Foundation
-import Tokenizers
+import MLXLMCommon
 
 /// Adapts a real tokenizer to the gate's ``TokenVocabulary``.
 ///
@@ -22,16 +22,16 @@ public struct TokenizerVocabulary: TokenVocabulary {
     }
 
     /// - Parameter size: the vocabulary size, taken from the model's logit width.
-    public init(tokenizer: any Tokenizer, size: Int) {
+    public init(tokenizer: any MLXLMCommon.Tokenizer, size: Int) {
         var texts = [String?](repeating: nil, count: size)
         let replacement = "\u{FFFD}"
         for id in 0 ..< size {
-            let decoded = tokenizer.decode(tokens: [id])
+            let decoded = tokenizer.decode(tokenIds: [id])
             guard !decoded.isEmpty, !decoded.contains(replacement) else { continue }
             // A special token decodes to its literal spelling but vanishes when
             // specials are skipped — that difference is how we spot one without
             // needing the tokenizer's private special-token set.
-            let withoutSpecials = tokenizer.decode(tokens: [id], skipSpecialTokens: true)
+            let withoutSpecials = tokenizer.decode(tokenIds: [id], skipSpecialTokens: true)
             guard !withoutSpecials.isEmpty else { continue }
             texts[id] = decoded
         }
@@ -49,7 +49,9 @@ public struct TokenizerVocabulary: TokenVocabulary {
     /// for the lifetime of the process. Gate construction then costs only the trie.
     private static let cache = Cache()
 
-    public static func shared(for modelId: String, tokenizer: any Tokenizer, size: Int)
+    public static func shared(
+        for modelId: String, tokenizer: any MLXLMCommon.Tokenizer, size: Int
+    )
         -> TokenizerVocabulary
     {
         cache.value(key: "\(modelId)#\(size)") {

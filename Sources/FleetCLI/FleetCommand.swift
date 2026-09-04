@@ -16,7 +16,7 @@ struct FleetCommand: AsyncParsableCommand {
             """,
         subcommands: [
             Datasets.self, Train.self, Test.self, Loras.self, Groups.self, Smoke.self,
-            Serve.self,
+            Serve.self, Rollback.self,
         ]
     )
 }
@@ -24,6 +24,7 @@ struct FleetCommand: AsyncParsableCommand {
 // MARK: - Shared helpers
 
 private func makeService() async -> FleetService {
+    FilePersistence.applyEnvironmentRoot()
     let service = FleetService()
     let report = await service.start()
     if !report.isClean {
@@ -243,6 +244,10 @@ struct Train: AsyncParsableCommand {
                 print("  iter \(iteration)  validation loss \(String(format: "%.4f", loss))")
             case .checkpointed(let iteration):
                 print("  checkpoint at \(iteration)")
+            case .evaluated(let exactMatch, let cases):
+                print(
+                    "  scored \(Int((exactMatch * 100).rounded()))% exact "
+                        + "on \(cases) held-out pair\(cases == 1 ? "" : "s")")
             case .finished(let cid, let directory):
                 print("Trained LoRA \(ContentID.short(cid))")
                 print("  \(directory.path)")
@@ -396,6 +401,30 @@ struct Loras: AsyncParsableCommand {
     }
 }
 
+/// Undo a retrain that came out worse than what it replaced.
+struct Rollback: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "rollback",
+        abstract: "Put a named slot's previous adapter generation back.")
+
+    @Option(help: "Thread id owning the slot.") var thread: String
+    @Option(help: "Ability id of the slot.") var ability: String
+
+    func run() async throws {
+        let service = await makeService()
+        defer { Task { await service.shutdown() } }
+        guard let restored = try await service.rollback(
+            threadId: thread, abilityId: ability)
+        else {
+            print("No previous generation kept for \(thread)/\(ability).")
+            return
+        }
+        print(
+            "Rolled \(ability) back to generation \(restored.generation). "
+                + "It is unscored until it is trained again.")
+    }
+}
+
 struct Groups: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "groups",
@@ -533,18 +562,29 @@ struct Serve: AsyncParsableCommand {
     @Option(name: .long, help: "gRPC FleetLoRA port.")
     var grpcPort: Int = FleetLoRAServer.defaultGRPCPort
 
-    @Option(name: .long, help: "Local Totem host for ExportCorpus pull.")
-    var totemHost: String = "127.0.0.1"
+    @Option(name: .long, help: "Local Thread host for ExportCorpus pull.")
+    var threadHost: String = "127.0.0.1"
 
-    @Option(name: .long, help: "Local Totem gRPC port.")
-    var totemGrpcPort: Int = 9090
+    @Option(name: .long, help: "Local Thread gRPC port.")
+    var threadGrpcPort: Int = 9090
+
+    @Option(name: .long, help: "Directory for fleet-db (default ~/Documents/fleet-db; env FLEET_DATA_DIR).")
+    var dataDir: String?
 
     func run() async throws {
-        print("fleet serve — health http://127.0.0.1:\(port)/health  gRPC \(grpcPort)")
+        // Storage root: --data-dir beats FLEET_DATA_DIR beats ~/Documents/fleet-db.
+        // Must land before FleetService() snapshots the root.
+        let root: URL
+        if let dataDir, !dataDir.isEmpty {
+            root = FilePersistence.setRoot(path: dataDir)
+        } else {
+            root = FilePersistence.applyEnvironmentRoot() ?? FilePersistence.getDefaultURL()
+        }
+        print("fleet serve — health http://127.0.0.1:\(port)/health  gRPC \(grpcPort)  store \(root.path)")
         try await FleetLoRAServer.serve(
             httpPort: port,
             grpcPort: grpcPort,
-            totemHost: totemHost,
-            totemPort: totemGrpcPort)
+            threadHost: threadHost,
+            threadPort: threadGrpcPort)
     }
 }
