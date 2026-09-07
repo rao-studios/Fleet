@@ -49,8 +49,9 @@ Reuses Thread/Client's warm design language (cream `#FAF9F6`, ink `#2D3142`, gol
 
 ## Storage — `fleet-db`
 
-Datasets and adapters live under `~/Documents/fleet-db` (modeled on Thread's
-`FilePersistence`):
+Datasets and adapters live under `~/Documents/fleet-db` by default (modeled on
+Thread's `FilePersistence`); `fleet serve --data-dir <path>` or `FLEET_DATA_DIR`
+relocates the store, and the footer shows the root in use:
 
 ```
 fleet-db/

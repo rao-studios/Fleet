@@ -487,3 +487,45 @@ final class FleetDBNamedSlotTests: StoreTestCase {
         XCTAssertEqual(report.removedDirectories, 0)
     }
 }
+
+
+/// `FLEET_DATA_DIR` and `--data-dir` both land in `FilePersistence.setRoot`.
+final class DataDirectoryTests: XCTestCase {
+    private var probe: URL!
+
+    override func setUp() {
+        super.setUp()
+        probe = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fleet-data-dir-\(UUID().uuidString)")
+    }
+
+    override func tearDown() {
+        unsetenv("FLEET_DATA_DIR")
+        FilePersistence.setRoot(nil)
+        try? FileManager.default.removeItem(at: probe)
+        super.tearDown()
+    }
+
+    func testSetRootPathExpandsTildeAndCreatesTheDirectory() {
+        let root = FilePersistence.setRoot(path: "~/fleet-data-dir-tilde-probe")
+        XCTAssertTrue(root.path.hasPrefix(NSHomeDirectory()))
+        XCTAssertFalse(root.path.contains("~"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.path))
+        XCTAssertEqual(FleetDB.root.standardizedFileURL.path, root.standardizedFileURL.path)
+        try? FileManager.default.removeItem(at: root)
+    }
+
+    func testEnvironmentRootIsHonoured() {
+        setenv("FLEET_DATA_DIR", probe.path, 1)
+        let applied = FilePersistence.applyEnvironmentRoot()
+        XCTAssertEqual(applied?.standardizedFileURL.path, probe.standardizedFileURL.path)
+        XCTAssertEqual(FilePersistence.getDefaultURL().standardizedFileURL.path, probe.standardizedFileURL.path)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: probe.path))
+    }
+
+    func testEmptyEnvironmentLeavesTheDefault() {
+        setenv("FLEET_DATA_DIR", "", 1)
+        XCTAssertNil(FilePersistence.applyEnvironmentRoot())
+        XCTAssertTrue(FilePersistence.getDefaultURL().path.hasSuffix("/Documents/fleet-db"))
+    }
+}

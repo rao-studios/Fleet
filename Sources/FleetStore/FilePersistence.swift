@@ -37,6 +37,27 @@ public final class FilePersistence: @unchecked Sendable {
         rootOverride.value = url
     }
 
+    /// Point the store at `path` (tilde expanded, created with intermediates).
+    /// Backs `fleet serve --data-dir`. Set before any ``FleetDB`` is constructed.
+    @discardableResult
+    public static func setRoot(path: String) -> URL {
+        let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath, isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        setRoot(url)
+        return url
+    }
+
+    /// Honour `FLEET_DATA_DIR` when it is set and non-empty. Every CLI entry
+    /// point calls this before touching the store so `fleet loras list` reads
+    /// the same `fleet-db` as a daemon launched with the variable; an explicit
+    /// `--data-dir` wins over it. Returns the root it applied, or nil.
+    @discardableResult
+    public static func applyEnvironmentRoot() -> URL? {
+        guard let raw = ProcessInfo.processInfo.environment["FLEET_DATA_DIR"],
+              !raw.isEmpty else { return nil }
+        return setRoot(path: raw)
+    }
+
     private static let rootOverride = Box()
 
     private final class Box: @unchecked Sendable {

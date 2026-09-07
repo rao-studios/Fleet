@@ -24,6 +24,7 @@ struct FleetCommand: AsyncParsableCommand {
 // MARK: - Shared helpers
 
 private func makeService() async -> FleetService {
+    FilePersistence.applyEnvironmentRoot()
     let service = FleetService()
     let report = await service.start()
     if !report.isClean {
@@ -567,8 +568,19 @@ struct Serve: AsyncParsableCommand {
     @Option(name: .long, help: "Local Thread gRPC port.")
     var threadGrpcPort: Int = 9090
 
+    @Option(name: .long, help: "Directory for fleet-db (default ~/Documents/fleet-db; env FLEET_DATA_DIR).")
+    var dataDir: String?
+
     func run() async throws {
-        print("fleet serve — health http://127.0.0.1:\(port)/health  gRPC \(grpcPort)")
+        // Storage root: --data-dir beats FLEET_DATA_DIR beats ~/Documents/fleet-db.
+        // Must land before FleetService() snapshots the root.
+        let root: URL
+        if let dataDir, !dataDir.isEmpty {
+            root = FilePersistence.setRoot(path: dataDir)
+        } else {
+            root = FilePersistence.applyEnvironmentRoot() ?? FilePersistence.getDefaultURL()
+        }
+        print("fleet serve — health http://127.0.0.1:\(port)/health  gRPC \(grpcPort)  store \(root.path)")
         try await FleetLoRAServer.serve(
             httpPort: port,
             grpcPort: grpcPort,

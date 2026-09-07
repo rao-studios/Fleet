@@ -69,7 +69,9 @@ which is exactly what a fixed state machine is meant to eliminate.
 
 ## Content-addressed LoRAs
 
-A LoRA's id is the SHA256 of its **training inputs only** — never the outputs:
+A LoRA's id is the SHA256 of its **training inputs only** — never the outputs.
+The store lives at `~/Documents/fleet-db` by default; `fleet serve --data-dir <path>`
+or `FLEET_DATA_DIR=<path>` (honoured by every subcommand) relocates it:
 
 ```
 fleet-db/

@@ -1,3 +1,4 @@
+import Fleet
 import SwiftUI
 
 struct ContentView: View {
@@ -62,7 +63,7 @@ struct ContentView: View {
 
             Spacer()
 
-            Text("fleet-db · ~/Documents/fleet-db")
+            Text("fleet-db · \(FleetDB.root.path)")
                 .font(.fleetMono(8.5))
                 .foregroundStyle(Color.fleetInk.opacity(0.3))
                 .padding(12)
