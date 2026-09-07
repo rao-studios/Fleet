@@ -94,4 +94,23 @@ enum FilePicker {
         panel.canChooseFiles = true
         return panel.runModal() == .OK ? panel.urls : []
     }
+
+    /// Pick a single directory, with a prompt naming what it is for.
+    static func pickDirectory(prompt: String) -> URL? {
+        let panel = NSOpenPanel()
+        panel.message = prompt
+        panel.prompt = "Choose"
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        return panel.runModal() == .OK ? panel.urls.first : nil
+    }
+
+    /// The JSON files in a directory, sorted by name so two folders pair up by index.
+    static func jsonFiles(in directory: URL) throws -> [URL] {
+        try FileManager.default
+            .contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension.lowercased() == "json" }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+    }
 }
