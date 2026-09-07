@@ -1,5 +1,6 @@
 import Conduit
 import FleetCore
+import FleetInference
 import FleetService
 import FleetStore
 import FleetTraining
@@ -10,7 +11,8 @@ import os
 public final class FleetLoRAServiceImpl: Fleet_V1_FleetLoRA.SimpleServiceProtocol, Sendable {
     private let service: FleetService
     private let corpus: TotemCorpusClient
-    private let training = OSAllocatedUnfairLock<Set<String>>(initialState: [])
+    /// Slot keys with a train run in flight. Internal so a test can seed it.
+    let training = OSAllocatedUnfairLock<Set<String>>(initialState: [])
 
     public init(service: FleetService, corpus: TotemCorpusClient) {
         self.service = service
@@ -95,6 +97,70 @@ public final class FleetLoRAServiceImpl: Fleet_V1_FleetLoRA.SimpleServiceProtoco
             try await response.write(
                 progress(stage: "error", message: String(describing: error)))
         }
+    }
+
+    /// One gated completion through a ready slot. Mary's Life engine dials
+    /// this instead of loading the base model itself.
+    public func complete(
+        request: Fleet_V1_CompleteRequest,
+        context: GRPCCore.ServerContext
+    ) async throws -> Fleet_V1_CompleteResponse {
+        guard let entry = await service.lora(totemId: request.totemID, abilityId: request.abilityID)
+        else {
+            throw RPCError(
+                code: .notFound,
+                message: "no adapter for \(request.abilityID) on \(request.totemID)")
+        }
+        let key = FleetDB.namedSlotKey(totemId: request.totemID, abilityId: request.abilityID)
+        let isTraining = training.withLock { $0.contains(key) }
+        let input = try Self.admit(
+            entryCID: entry.cid,
+            isTraining: isTraining,
+            requestedCID: request.cid,
+            inputJSON: request.inputJson,
+            abilityID: request.abilityID)
+        let result: GatedResult
+        do {
+            result = try await service.complete(cid: entry.cid, input: input)
+        } catch let error as FleetServiceError {
+            throw RPCError(code: .failedPrecondition, message: error.description)
+        }
+        return Self.response(from: result, cid: entry.cid)
+    }
+
+    /// The refusals, in order, before any GPU work: training in flight, a
+    /// stale cid pin, an unparsable input. Pure so tests need no server.
+    static func admit(
+        entryCID: String,
+        isTraining: Bool,
+        requestedCID: String,
+        inputJSON: String,
+        abilityID: String
+    ) throws -> JSONValue {
+        guard !isTraining else {
+            throw RPCError(
+                code: .failedPrecondition, message: "\(abilityID) is training")
+        }
+        guard requestedCID.isEmpty || requestedCID == entryCID else {
+            throw RPCError(
+                code: .failedPrecondition,
+                message: "adapter for \(abilityID) is now \(entryCID), not \(requestedCID)")
+        }
+        do {
+            return try JSONParser.parse(inputJSON)
+        } catch {
+            throw RPCError(code: .invalidArgument, message: "input_json: \(error)")
+        }
+    }
+
+    static func response(from result: GatedResult, cid: String) -> Fleet_V1_CompleteResponse {
+        var response = Fleet_V1_CompleteResponse()
+        response.outputJson = JSONCanonical.serialize(result.json)
+        response.rawText = result.rawText
+        response.forcedFraction = result.forcedFraction
+        response.promptTokens = Int32(result.promptTokenCount)
+        response.cid = cid
+        return response
     }
 
     private func collectPairs(_ request: Fleet_V1_TrainRequest) async throws -> [JSONPair] {
