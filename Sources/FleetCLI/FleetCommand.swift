@@ -406,16 +406,16 @@ struct Rollback: AsyncParsableCommand {
         commandName: "rollback",
         abstract: "Put a named slot's previous adapter generation back.")
 
-    @Option(help: "Totem id owning the slot.") var totem: String
+    @Option(help: "Thread id owning the slot.") var thread: String
     @Option(help: "Ability id of the slot.") var ability: String
 
     func run() async throws {
         let service = await makeService()
         defer { Task { await service.shutdown() } }
         guard let restored = try await service.rollback(
-            totemId: totem, abilityId: ability)
+            threadId: thread, abilityId: ability)
         else {
-            print("No previous generation kept for \(totem)/\(ability).")
+            print("No previous generation kept for \(thread)/\(ability).")
             return
         }
         print(
@@ -561,18 +561,18 @@ struct Serve: AsyncParsableCommand {
     @Option(name: .long, help: "gRPC FleetLoRA port.")
     var grpcPort: Int = FleetLoRAServer.defaultGRPCPort
 
-    @Option(name: .long, help: "Local Totem host for ExportCorpus pull.")
-    var totemHost: String = "127.0.0.1"
+    @Option(name: .long, help: "Local Thread host for ExportCorpus pull.")
+    var threadHost: String = "127.0.0.1"
 
-    @Option(name: .long, help: "Local Totem gRPC port.")
-    var totemGrpcPort: Int = 9090
+    @Option(name: .long, help: "Local Thread gRPC port.")
+    var threadGrpcPort: Int = 9090
 
     func run() async throws {
         print("fleet serve — health http://127.0.0.1:\(port)/health  gRPC \(grpcPort)")
         try await FleetLoRAServer.serve(
             httpPort: port,
             grpcPort: grpcPort,
-            totemHost: totemHost,
-            totemPort: totemGrpcPort)
+            threadHost: threadHost,
+            threadPort: threadGrpcPort)
     }
 }

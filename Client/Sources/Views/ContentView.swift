@@ -15,7 +15,7 @@ struct ContentView: View {
         .preferredColorScheme(.light)  // palette is light-only; lock it so default
         .task {                         // text/controls (incl. the segmented selector) stay readable
             await appState.start()             // reconcile the store, then load the library
-            await appState.startTotemServer()  // auto-start: the Fleet Conduit server listens by default
+            await appState.startThreadServer()  // auto-start: the Fleet Conduit server listens by default
         }
     }
 

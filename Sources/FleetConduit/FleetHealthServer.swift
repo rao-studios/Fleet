@@ -1,7 +1,7 @@
 import Foundation
 import Network
 
-/// Tiny HTTP/1.1 `/health` listener so Mary can treat Fleet like Seer/Totem.
+/// Tiny HTTP/1.1 `/health` listener so Mary can treat Fleet like Sewn/Thread.
 public final class FleetHealthServer: @unchecked Sendable {
     private var listener: NWListener?
 

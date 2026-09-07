@@ -21,8 +21,8 @@ public struct LoRAEntry: Sendable, Codable, Identifiable, Equatable {
     public var updatedAt: Date
     /// Incremented each time this CID is retrained — same inputs, evolved outputs.
     public var generation: Int
-    /// Named-slot addressing: one LoRA per totem × ability. Nil for CID-only smoke LoRAs.
-    public var totemId: String?
+    /// Named-slot addressing: one LoRA per thread × ability. Nil for CID-only smoke LoRAs.
+    public var threadId: String?
     public var abilityId: String?
     /// Share of held-out pairs the published adapter reproduced exactly.
     /// Nil means never scored — an entry written before scoring existed.
@@ -47,7 +47,7 @@ public struct LoRAEntry: Sendable, Codable, Identifiable, Equatable {
         createdAt: Date = .now,
         updatedAt: Date = .now,
         generation: Int = 1,
-        totemId: String? = nil,
+        threadId: String? = nil,
         abilityId: String? = nil,
         evalExactMatch: Double? = nil,
         evalCases: Int = 0
@@ -66,7 +66,7 @@ public struct LoRAEntry: Sendable, Codable, Identifiable, Equatable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.generation = generation
-        self.totemId = totemId
+        self.threadId = threadId
         self.abilityId = abilityId
         self.evalExactMatch = evalExactMatch
         self.evalCases = evalCases
@@ -123,7 +123,7 @@ public struct LoRAEntry: Sendable, Codable, Identifiable, Equatable {
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? .now
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? .now
         generation = try container.decodeIfPresent(Int.self, forKey: .generation) ?? 1
-        totemId = try container.decodeIfPresent(String.self, forKey: .totemId)
+        threadId = try container.decodeIfPresent(String.self, forKey: .threadId)
         abilityId = try container.decodeIfPresent(String.self, forKey: .abilityId)
         evalExactMatch = try container.decodeIfPresent(Double.self, forKey: .evalExactMatch)
         evalCases = try container.decodeIfPresent(Int.self, forKey: .evalCases) ?? 0
@@ -232,7 +232,7 @@ public struct FleetRegistry: Sendable, Codable {
     /// cid → group ids, kept sorted.
     public var loraGroups: [String: [String]] = [:]
     public var datasets: [UUID: DatasetEntry] = [:]
-    /// `"totemId|abilityId"` → cid. The named slot is the user-facing identity;
+    /// `"threadId|abilityId"` → cid. The named slot is the user-facing identity;
     /// the CID remains provenance on the entry.
     public var namedSlots: [String: String] = [:]
 

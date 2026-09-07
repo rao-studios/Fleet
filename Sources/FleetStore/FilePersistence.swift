@@ -2,7 +2,7 @@ import Foundation
 
 /// `fleet-db` document-file read-write utility.
 ///
-/// Ported from Totem's `FilePersistence`: `Codable` + `PropertyListEncoder` with
+/// Ported from Thread's `FilePersistence`: `Codable` + `PropertyListEncoder` with
 /// `.atomic` writes, rooted at `~/Documents/fleet-db`. One instance maps to one
 /// logical file under a string `key` (e.g. `"datasets/<uuid>"`). Not thread-safe
 /// on its own — wrap in ``PersistenceActor`` or use it inside an `actor` (as

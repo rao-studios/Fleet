@@ -101,8 +101,8 @@ every step.
   by whether the schema forced it or the LoRA chose it, click one to see where in
   the schema it landed, how many tokens were admissible, and what the model ranked
   highest.
-- **Totem sources** — browse documents on connected Totems (Fleet hosts the
-  Conduit gRPC server; Totems dial in).
+- **Thread sources** — browse documents on connected Threads (Fleet hosts the
+  Conduit gRPC server; Threads dial in).
 
 ## CLI
 
@@ -125,7 +125,7 @@ fleet groups create | list
 | `FleetTraining` | `StateTrainer` over Frigate's `LoRATrain`, plus the attribution manifest | Frigate / MLX |
 | `FleetInference` | `StructuredSession` and the gated `LogitSampler` that applies the schema at decode time | Frigate / MLX |
 | `FleetService` | the orchestration facade the app and CLI both drive | — |
-| `FleetConduit` | Fleet as a Conduit mothership Totems dial into | Conduit (gRPC) |
+| `FleetConduit` | Fleet as a Conduit mothership Threads dial into | Conduit (gRPC) |
 | `FleetTasks` | experimental objective → validated job DAG → task deployment | none (Foundation) |
 | `Fleet` | umbrella re-exporting the above | — |
 | `FleetCLI` | the `fleet` executable | swift-argument-parser |
@@ -147,15 +147,15 @@ jobs. See [`Docs/BONNIE_TASK_DEPLOYMENT.md`](Docs/BONNIE_TASK_DEPLOYMENT.md).
 - **gRPC ingestion** — a Conduit service wrapping `FleetService` so another
   application can create datasets and request LoRAs over the wire. The facade is
   already shaped request/response for this.
-- **Totem documents → pairs** — browsing and the transport are live; deriving
-  input/output pairs from Totem documents lands with the ingestion work.
+- **Thread documents → pairs** — browsing and the transport are live; deriving
+  input/output pairs from Thread documents lands with the ingestion work.
 - **On-demand LoRAs** — the content-addressed store is the foundation: ask for a
   LoRA by its input set, get the current generation or train one.
 
 ## Dependencies
 
 - [Frigate](https://github.com/rao-studios/Frigate) — vendored MLX engine (inference, LoRA training).
-- [Conduit](https://github.com/rao-studios/Conduit) — gRPC transport shared with Totem.
+- [Conduit](https://github.com/rao-studios/Conduit) — gRPC transport shared with Thread.
 - [swift-argument-parser](https://github.com/apple/swift-argument-parser) — CLI.
 
 Licensed under GPLv3.

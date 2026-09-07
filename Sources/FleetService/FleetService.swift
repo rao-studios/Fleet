@@ -233,10 +233,10 @@ public actor FleetService {
         }
     }
 
-    /// Train a LoRA and publish it under `loras/<totemId>/<abilityId>/`.
+    /// Train a LoRA and publish it under `loras/<threadId>/<abilityId>/`.
     public func trainNamed(
         datasetId: UUID,
-        totemId: String,
+        threadId: String,
         abilityId: String,
         config: TrainingConfig = TrainingConfig()
     ) async throws -> AsyncThrowingStream<TrainingProgress, Error> {
@@ -261,7 +261,7 @@ public actor FleetService {
                     {
                         if case .finished(let cid, _) = progress {
                             let entry = try await db.publishNamedLoRA(
-                                totemId: totemId,
+                                threadId: threadId,
                                 abilityId: abilityId,
                                 cid: cid,
                                 from: staging
@@ -278,7 +278,7 @@ public actor FleetService {
                                     scale: config.scale,
                                     numLayers: config.numLayers,
                                     iterations: config.iterations,
-                                    totemId: totemId,
+                                    threadId: threadId,
                                     abilityId: abilityId
                                 )
                             }
@@ -436,12 +436,12 @@ public actor FleetService {
         await db.lora(cid: cid)
     }
 
-    public func loras(totemId: String) async -> [LoRAEntry] {
-        await db.loras(totemId: totemId)
+    public func loras(threadId: String) async -> [LoRAEntry] {
+        await db.loras(threadId: threadId)
     }
 
-    public func lora(totemId: String, abilityId: String) async -> LoRAEntry? {
-        await db.lora(totemId: totemId, abilityId: abilityId)
+    public func lora(threadId: String, abilityId: String) async -> LoRAEntry? {
+        await db.lora(threadId: threadId, abilityId: abilityId)
     }
 
     public func schema(cid: String) -> SchemaTemplate? {
@@ -472,11 +472,11 @@ public actor FleetService {
     /// Put a named slot's previous generation back and forget the session
     /// built on the one being replaced.
     @discardableResult
-    public func rollback(totemId: String, abilityId: String) async throws -> LoRAEntry? {
-        if let current = await db.lora(totemId: totemId, abilityId: abilityId) {
+    public func rollback(threadId: String, abilityId: String) async throws -> LoRAEntry? {
+        if let current = await db.lora(threadId: threadId, abilityId: abilityId) {
             invalidateSession(cid: current.cid)
         }
-        return try await db.rollbackNamedLoRA(totemId: totemId, abilityId: abilityId)
+        return try await db.rollbackNamedLoRA(threadId: threadId, abilityId: abilityId)
     }
 
     @discardableResult

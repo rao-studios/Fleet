@@ -10,11 +10,11 @@ import os
 
 public final class FleetLoRAServiceImpl: Fleet_V1_FleetLoRA.SimpleServiceProtocol, Sendable {
     private let service: FleetService
-    private let corpus: TotemCorpusClient
+    private let corpus: ThreadCorpusClient
     /// Slot keys with a train run in flight. Internal so a test can seed it.
     let training = OSAllocatedUnfairLock<Set<String>>(initialState: [])
 
-    public init(service: FleetService, corpus: TotemCorpusClient) {
+    public init(service: FleetService, corpus: ThreadCorpusClient) {
         self.service = service
         self.corpus = corpus
     }
@@ -23,7 +23,7 @@ public final class FleetLoRAServiceImpl: Fleet_V1_FleetLoRA.SimpleServiceProtoco
         request: Fleet_V1_ListAdaptersRequest,
         context: GRPCCore.ServerContext
     ) async throws -> Fleet_V1_ListAdaptersResponse {
-        let entries = await service.loras(totemId: request.totemID)
+        let entries = await service.loras(threadId: request.threadID)
         var response = Fleet_V1_ListAdaptersResponse()
         response.slots = []
         for entry in entries {
@@ -36,7 +36,7 @@ public final class FleetLoRAServiceImpl: Fleet_V1_FleetLoRA.SimpleServiceProtoco
         request: Fleet_V1_AdapterStatusRequest,
         context: GRPCCore.ServerContext
     ) async throws -> Fleet_V1_LoRASlot {
-        if let entry = await service.lora(totemId: request.totemID, abilityId: request.abilityID) {
+        if let entry = await service.lora(threadId: request.threadID, abilityId: request.abilityID) {
             return await slot(from: entry)
         }
         var empty = Fleet_V1_LoRASlot()
@@ -50,7 +50,7 @@ public final class FleetLoRAServiceImpl: Fleet_V1_FleetLoRA.SimpleServiceProtoco
         response: GRPCCore.RPCWriter<Fleet_V1_TrainProgress>,
         context: GRPCCore.ServerContext
     ) async throws {
-        let key = FleetDB.namedSlotKey(totemId: request.totemID, abilityId: request.abilityID)
+        let key = FleetDB.namedSlotKey(threadId: request.threadID, abilityId: request.abilityID)
         // ONE RUN PER SLOT. The insert's result is the claim: two concurrent
         // Train calls for the same ability would each load a base model and
         // then race to publish into the same directory. The loser's weights
@@ -81,13 +81,13 @@ public final class FleetLoRAServiceImpl: Fleet_V1_FleetLoRA.SimpleServiceProtoco
                 return
             }
             let dataset = try await service.createDataset(
-                name: "life · \(request.abilityID) · \(request.totemID)",
+                name: "life · \(request.abilityID) · \(request.threadID)",
                 pairs: pairs)
             let modelId = request.modelID.isEmpty
                 ? TrainingConfig.defaultModelId : request.modelID
             let stream = try await service.trainNamed(
                 datasetId: dataset.id,
-                totemId: request.totemID,
+                threadId: request.threadID,
                 abilityId: request.abilityID,
                 config: .forCorpus(pairCount: pairs.count, modelId: modelId))
             for try await event in stream {
@@ -105,13 +105,13 @@ public final class FleetLoRAServiceImpl: Fleet_V1_FleetLoRA.SimpleServiceProtoco
         request: Fleet_V1_CompleteRequest,
         context: GRPCCore.ServerContext
     ) async throws -> Fleet_V1_CompleteResponse {
-        guard let entry = await service.lora(totemId: request.totemID, abilityId: request.abilityID)
+        guard let entry = await service.lora(threadId: request.threadID, abilityId: request.abilityID)
         else {
             throw RPCError(
                 code: .notFound,
-                message: "no adapter for \(request.abilityID) on \(request.totemID)")
+                message: "no adapter for \(request.abilityID) on \(request.threadID)")
         }
-        let key = FleetDB.namedSlotKey(totemId: request.totemID, abilityId: request.abilityID)
+        let key = FleetDB.namedSlotKey(threadId: request.threadID, abilityId: request.abilityID)
         let isTraining = training.withLock { $0.contains(key) }
         let input = try Self.admit(
             entryCID: entry.cid,
@@ -169,7 +169,7 @@ public final class FleetLoRAServiceImpl: Fleet_V1_FleetLoRA.SimpleServiceProtoco
                 JSONPair(
                     input: try JSONParser.parse(pair.inputJson),
                     output: try JSONParser.parse(pair.outputJson),
-                    provenance: .init(origin: .totem, totemId: request.totemID))
+                    provenance: .init(origin: .thread, threadId: request.threadID))
             }
         }
         guard !request.ownerID.isEmpty else { return [] }
@@ -187,7 +187,7 @@ public final class FleetLoRAServiceImpl: Fleet_V1_FleetLoRA.SimpleServiceProtoco
                     from: parsed,
                     documentId: document.id,
                     groupId: document.groupID,
-                    totemId: request.totemID)
+                    threadId: request.threadID)
             else { continue }
             pairs.append(pair)
         }
@@ -205,7 +205,7 @@ public final class FleetLoRAServiceImpl: Fleet_V1_FleetLoRA.SimpleServiceProtoco
 
     private func slot(from entry: LoRAEntry) async -> Fleet_V1_LoRASlot {
         let key = FleetDB.namedSlotKey(
-            totemId: entry.totemId ?? "", abilityId: entry.abilityId ?? "")
+            threadId: entry.threadId ?? "", abilityId: entry.abilityId ?? "")
         let isTraining = training.withLock { $0.contains(key) }
         var slot = Fleet_V1_LoRASlot()
         slot.abilityID = entry.abilityId ?? ""

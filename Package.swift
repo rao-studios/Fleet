@@ -13,7 +13,7 @@
 //   FleetTraining  StateDataset -> Frigate LoRATrain.train -> adapter        (MLX/Frigate)
 //   FleetInference schema-gated constrained decoding over a base + LoRA      (MLX/Frigate)
 //   FleetService   the orchestration facade the app and CLI both drive
-//   FleetConduit   Fleet as a Conduit mothership Totems dial into            (gRPC)
+//   FleetConduit   Fleet as a Conduit mothership Threads dial into            (gRPC)
 //   Fleet          umbrella that re-exports the above
 //   FleetCLI       the `fleet` executable
 

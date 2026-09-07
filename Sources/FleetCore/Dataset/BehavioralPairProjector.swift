@@ -24,7 +24,7 @@ public enum BehavioralPairProjector {
     ///   each generation learns from the last one's output rather than from
     ///   the user, and the adapter drifts away from the behaviour it was
     ///   supposed to copy. Mary's side filters these too; this is the half
-    ///   that holds when the corpus is read straight from Totem.
+    ///   that holds when the corpus is read straight from Thread.
     public static func isTrainable(_ episode: JSONValue) -> Bool {
         let reason = episode["sealedReason"]?.stringValue ?? ""
         guard reason == "completed" else { return false }
@@ -38,20 +38,20 @@ public enum BehavioralPairProjector {
         from episodeJSON: String,
         documentId: String? = nil,
         groupId: String? = nil,
-        totemId: String? = nil
+        threadId: String? = nil
     ) throws -> JSONPair {
         try pair(
             from: JSONParser.parse(episodeJSON),
             documentId: documentId,
             groupId: groupId,
-            totemId: totemId)
+            threadId: threadId)
     }
 
     public static func pair(
         from episode: JSONValue,
         documentId: String? = nil,
         groupId: String? = nil,
-        totemId: String? = nil
+        threadId: String? = nil
     ) throws -> JSONPair {
         guard let input = episode["input"] else { throw Error.notAnEpisode }
         let query = input["query"]?.stringValue ?? ""
@@ -92,8 +92,8 @@ public enum BehavioralPairProjector {
             input: inputValue,
             output: outputValue,
             provenance: SourceProvenance(
-                origin: .totem,
-                totemId: totemId,
+                origin: .thread,
+                threadId: threadId,
                 documentId: documentId,
                 groupId: groupId))
     }

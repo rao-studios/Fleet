@@ -6,7 +6,7 @@ import XCTest
 /// THE OTHER HALF OF THIS TEST LIVES IN MARY, at
 /// `Tests/MaryFoundationTests/BehavioralPairParityTests.swift`, over the same
 /// two fixture files. Mary projects a sealed episode into a pair when it
-/// wants to know what an adapter would see; Fleet projects the stored Totem
+/// wants to know what an adapter would see; Fleet projects the stored Thread
 /// document when it builds the training set. Those must agree byte for byte
 /// — when they did not, the lead place was spelled `applications:textedit`
 /// in training and `textedit` at inference, and every idle prediction was

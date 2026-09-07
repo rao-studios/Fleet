@@ -12,7 +12,7 @@ struct DatasetsView: View {
     @State private var showMockSheet = false
     @State private var importError: String?
     @State private var isWorking = false
-    @State private var showTotemPanel = false
+    @State private var showThreadPanel = false
 
     var body: some View {
         HSplitView {
@@ -20,8 +20,8 @@ struct DatasetsView: View {
                 .frame(minWidth: 260, idealWidth: 300)
             detail
                 .frame(minWidth: 420)
-            if showTotemPanel {
-                TotemSourcePanel(showPanel: $showTotemPanel)
+            if showThreadPanel {
+                ThreadSourcePanel(showPanel: $showThreadPanel)
                     .frame(minWidth: 300, idealWidth: 340)
             }
         }
@@ -29,14 +29,14 @@ struct DatasetsView: View {
         .toolbar {
             ToolbarItem {
                 Button {
-                    showTotemPanel.toggle()
+                    showThreadPanel.toggle()
                 } label: {
                     Label(
-                        "Totem sources",
-                        systemImage: showTotemPanel
+                        "Thread sources",
+                        systemImage: showThreadPanel
                             ? "sidebar.right" : "point.3.connected.trianglepath.dotted")
                 }
-                .help("Browse documents on connected Totems")
+                .help("Browse documents on connected Threads")
             }
         }
         .sheet(isPresented: $showMockSheet) {

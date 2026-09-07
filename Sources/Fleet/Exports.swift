@@ -5,7 +5,7 @@
 // orchestration facade, and the task deployment experiment.
 //
 // FleetConduit is deliberately not re-exported — it pulls in gRPC, and only the
-// app and the Totem integration need it.
+// app and the Thread integration need it.
 
 @_exported import FleetCore
 @_exported import FleetInference

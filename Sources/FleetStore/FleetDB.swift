@@ -37,7 +37,7 @@ public enum LoRAArtifact {
 /// ```
 /// A LoRA lives at its content id, so retraining the same inputs replaces the
 /// directory in place instead of accumulating a new UUID every time.
-/// Named discipline slots live at `loras/<totemId>/<abilityId>/` and overwrite
+/// Named discipline slots live at `loras/<threadId>/<abilityId>/` and overwrite
 /// in place; the CID is kept on the entry as provenance.
 public actor FleetDB {
 
@@ -56,23 +56,23 @@ public actor FleetDB {
         Self.root.appendingPathComponent("loras").appendingPathComponent(cid)
     }
 
-    /// Named slot: `loras/<totemId>/<abilityId>/`.
-    public nonisolated func namedAdapterDirectory(totemId: String, abilityId: String) -> URL {
+    /// Named slot: `loras/<threadId>/<abilityId>/`.
+    public nonisolated func namedAdapterDirectory(threadId: String, abilityId: String) -> URL {
         Self.root
             .appendingPathComponent("loras")
-            .appendingPathComponent(totemId)
+            .appendingPathComponent(threadId)
             .appendingPathComponent(abilityId)
     }
 
-    public nonisolated static func namedSlotKey(totemId: String, abilityId: String) -> String {
-        "\(totemId)|\(abilityId)"
+    public nonisolated static func namedSlotKey(threadId: String, abilityId: String) -> String {
+        "\(threadId)|\(abilityId)"
     }
 
     public nonisolated func adapterDirectory(for entry: LoRAEntry) -> URL {
-        if let totemId = entry.totemId, let abilityId = entry.abilityId,
-           !totemId.isEmpty, !abilityId.isEmpty
+        if let threadId = entry.threadId, let abilityId = entry.abilityId,
+           !threadId.isEmpty, !abilityId.isEmpty
         {
-            return namedAdapterDirectory(totemId: totemId, abilityId: abilityId)
+            return namedAdapterDirectory(threadId: threadId, abilityId: abilityId)
         }
         return adapterDirectory(cid: entry.cid)
     }
@@ -186,17 +186,17 @@ public actor FleetDB {
         return published
     }
 
-    /// Publish under a named totem/ability slot. Weights replace in place and
+    /// Publish under a named thread/ability slot. Weights replace in place and
     /// generation bumps; the CID stays on the entry as provenance.
     @discardableResult
     public func publishNamedLoRA(
-        totemId: String,
+        threadId: String,
         abilityId: String,
         cid: String,
         from staging: URL,
         makeEntry: @Sendable (_ previous: LoRAEntry?) -> LoRAEntry
     ) async throws -> LoRAEntry {
-        let destination = namedAdapterDirectory(totemId: totemId, abilityId: abilityId)
+        let destination = namedAdapterDirectory(threadId: threadId, abilityId: abilityId)
         let manager = FileManager.default
         try manager.createDirectory(
             at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -206,7 +206,7 @@ public actor FleetDB {
             // in place, so a retrain that came out worse than the one before
             // it could not be undone — the only copy of the good weights was
             // the one just deleted.
-            let previous = previousAdapterDirectory(totemId: totemId, abilityId: abilityId)
+            let previous = previousAdapterDirectory(threadId: threadId, abilityId: abilityId)
             try? manager.removeItem(at: previous)
             try? manager.copyItem(at: destination, to: previous)
             _ = try manager.replaceItemAt(destination, withItemAt: staging)
@@ -214,11 +214,11 @@ public actor FleetDB {
             try manager.moveItem(at: staging, to: destination)
         }
 
-        let key = Self.namedSlotKey(totemId: totemId, abilityId: abilityId)
+        let key = Self.namedSlotKey(threadId: threadId, abilityId: abilityId)
         let previousCID = snapshot.namedSlots[key]
         let previous = previousCID.flatMap { snapshot.loras[$0] }
         var entry = makeEntry(previous)
-        entry.totemId = totemId
+        entry.threadId = threadId
         entry.abilityId = abilityId
         if let previous {
             entry.label = entry.label ?? previous.label
@@ -240,9 +240,9 @@ public actor FleetDB {
     /// Where the generation this slot replaced is kept, so a bad adapter can
     /// be undone. One deep: the point is recovery, not history.
     public nonisolated func previousAdapterDirectory(
-        totemId: String, abilityId: String
+        threadId: String, abilityId: String
     ) -> URL {
-        namedAdapterDirectory(totemId: totemId, abilityId: abilityId)
+        namedAdapterDirectory(threadId: threadId, abilityId: abilityId)
             .deletingLastPathComponent()
             .appendingPathComponent("\(abilityId)\(Self.previousSuffix)")
     }
@@ -262,18 +262,18 @@ public actor FleetDB {
     /// Put the previous generation back. Returns nil when there is none —
     /// the first generation of a slot has nothing behind it.
     @discardableResult
-    public func rollbackNamedLoRA(totemId: String, abilityId: String) async throws -> LoRAEntry? {
+    public func rollbackNamedLoRA(threadId: String, abilityId: String) async throws -> LoRAEntry? {
         let manager = FileManager.default
-        let previous = previousAdapterDirectory(totemId: totemId, abilityId: abilityId)
+        let previous = previousAdapterDirectory(threadId: threadId, abilityId: abilityId)
         guard manager.fileExists(
             atPath: previous.appendingPathComponent(LoRAArtifact.weights).path)
         else { return nil }
-        let key = Self.namedSlotKey(totemId: totemId, abilityId: abilityId)
+        let key = Self.namedSlotKey(threadId: threadId, abilityId: abilityId)
         guard let currentCID = snapshot.namedSlots[key],
               let current = snapshot.loras[currentCID]
         else { return nil }
 
-        let live = namedAdapterDirectory(totemId: totemId, abilityId: abilityId)
+        let live = namedAdapterDirectory(threadId: threadId, abilityId: abilityId)
         let scratch = try makeStagingDirectory()
         try? manager.removeItem(at: scratch)
         // Three-way swap so a failure never leaves the slot without weights.
@@ -297,14 +297,14 @@ public actor FleetDB {
         return published
     }
 
-    public func lora(totemId: String, abilityId: String) -> LoRAEntry? {
-        let key = Self.namedSlotKey(totemId: totemId, abilityId: abilityId)
+    public func lora(threadId: String, abilityId: String) -> LoRAEntry? {
+        let key = Self.namedSlotKey(threadId: threadId, abilityId: abilityId)
         guard let cid = snapshot.namedSlots[key] else { return nil }
         return snapshot.loras[cid]
     }
 
-    public func loras(totemId: String) -> [LoRAEntry] {
-        snapshot.loras.values.filter { $0.totemId == totemId }
+    public func loras(threadId: String) -> [LoRAEntry] {
+        snapshot.loras.values.filter { $0.threadId == threadId }
             .sorted { $0.abilityId ?? "" < $1.abilityId ?? "" }
     }
 
@@ -338,9 +338,9 @@ public actor FleetDB {
         try? FileManager.default.removeItem(at: adapterDirectory(cid: cid))
         if let entry {
             try? FileManager.default.removeItem(at: adapterDirectory(for: entry))
-            if let totemId = entry.totemId, let abilityId = entry.abilityId {
+            if let threadId = entry.threadId, let abilityId = entry.abilityId {
                 try? FileManager.default.removeItem(
-                    at: previousAdapterDirectory(totemId: totemId, abilityId: abilityId))
+                    at: previousAdapterDirectory(threadId: threadId, abilityId: abilityId))
             }
         }
         await registry.mutateAndFlush { registry in
@@ -576,12 +576,12 @@ public actor FleetDB {
         FilePersistence(key: "datasets/\(id.uuidString)")
     }
 
-    /// A named slot tree is `loras/<totemId>/<abilityId>/adapters.safetensors`.
-    /// Totem ids are UUIDs, so reconcile must not treat those folders as the
+    /// A named slot tree is `loras/<threadId>/<abilityId>/adapters.safetensors`.
+    /// Thread ids are UUIDs, so reconcile must not treat those folders as the
     /// pre-rewrite UUID layout.
     nonisolated static func containsNamedSlot(_ url: URL) -> Bool {
         // A kept previous generation counts: it lives beside the live slot
-        // under the same totem directory and holds real weights.
+        // under the same thread directory and holds real weights.
         guard let children = try? FileManager.default.contentsOfDirectory(
             at: url, includingPropertiesForKeys: [.isDirectoryKey])
         else { return false }

@@ -31,19 +31,19 @@ enum Screen: String, CaseIterable, Identifiable {
 /// App-wide state container (single source of truth, injected via environment).
 ///
 /// All pipeline work goes through ``FleetService`` — this holds only what the
-/// views need to render, plus the Totem server the app hosts.
+/// views need to render, plus the Thread server the app hosts.
 @MainActor
 final class AppState: ObservableObject {
 
     let service = FleetService()
 
-    // Totem import (Conduit gRPC) — Fleet hosts the server; Totems dial in.
-    let totemServer = FleetTotemServer()
-    @Published var totemServerRunning = false
-    @Published var totemServerPort = 9092
-    @Published var totemServerError: String?
-    @Published var connectedTotems: [ConnectedTotem] = []
-    private var totemStreamTask: Task<Void, Never>?
+    // Thread import (Conduit gRPC) — Fleet hosts the server; Threads dial in.
+    let threadServer = FleetThreadServer()
+    @Published var threadServerRunning = false
+    @Published var threadServerPort = 9092
+    @Published var threadServerError: String?
+    @Published var connectedThreads: [ConnectedThread] = []
+    private var threadStreamTask: Task<Void, Never>?
 
     // Navigation
     @Published var screen: Screen = .datasets
@@ -270,42 +270,42 @@ final class AppState: ObservableObject {
         await refresh()
     }
 
-    // MARK: - Totem import server
+    // MARK: - Thread import server
 
-    func startTotemServer() async {
-        guard !totemServerRunning else { return }  // auto-start + manual Start must not double-bind
-        totemServerError = nil
+    func startThreadServer() async {
+        guard !threadServerRunning else { return }  // auto-start + manual Start must not double-bind
+        threadServerError = nil
 
         // The gRPC serve loop binds inside a detached task, so a port clash would
         // otherwise leave us falsely "listening". Probe the port first and surface it.
-        guard AppState.portIsAvailable(totemServerPort) else {
-            totemServerError = "Port \(totemServerPort) is in use — change it and Restart."
+        guard AppState.portIsAvailable(threadServerPort) else {
+            threadServerError = "Port \(threadServerPort) is in use — change it and Restart."
             return
         }
 
-        await totemServer.start(port: totemServerPort)
-        totemServerRunning = await totemServer.isRunning
-        totemStreamTask?.cancel()
-        let stream = await totemServer.totemsStream()
-        totemStreamTask = Task { [weak self] in
-            for await totems in stream {
-                await MainActor.run { self?.connectedTotems = totems }
+        await threadServer.start(port: threadServerPort)
+        threadServerRunning = await threadServer.isRunning
+        threadStreamTask?.cancel()
+        let stream = await threadServer.threadsStream()
+        threadStreamTask = Task { [weak self] in
+            for await threads in stream {
+                await MainActor.run { self?.connectedThreads = threads }
             }
         }
     }
 
-    func stopTotemServer() async {
-        totemStreamTask?.cancel()
-        totemStreamTask = nil
-        await totemServer.stop()
-        totemServerRunning = false
-        connectedTotems = []
+    func stopThreadServer() async {
+        threadStreamTask?.cancel()
+        threadStreamTask = nil
+        await threadServer.stop()
+        threadServerRunning = false
+        connectedThreads = []
     }
 
     /// Stop then start — used when the listening port is changed.
-    func restartTotemServer() async {
-        await stopTotemServer()
-        await startTotemServer()
+    func restartThreadServer() async {
+        await stopThreadServer()
+        await startThreadServer()
     }
 
     /// Best-effort check that `port` can be bound on 0.0.0.0 (matches the server's
@@ -333,7 +333,7 @@ final class AppState: ObservableObject {
         #endif
     }
 
-    func totemImporter() async -> TotemImporter {
-        await totemServer.importer()
+    func threadImporter() async -> ThreadImporter {
+        await threadServer.importer()
     }
 }
