@@ -14,14 +14,18 @@ public actor RegistryMutator {
 
     private let persistence: FilePersistence
     private let box: ReadWriteValue<FleetRegistry>
+    /// The one flush timer. Never cancelled while it sleeps — see `scheduleFlush`.
     private var flushTask: Task<Void, Never>?
+    /// The debounce's trailing edge, in `DispatchTime` uptime nanoseconds;
+    /// nil when nothing is waiting to be written.
+    private var flushDeadline: UInt64?
 
-    /// Seconds to wait after the last write before persisting.
-    private let debounceInterval: Duration
+    /// Nanoseconds to wait after the last write before persisting.
+    private let debounceNanos: UInt64
 
     public init(key: String = "registry", debounceSeconds: Double = 1.0) {
         self.persistence = FilePersistence(key: key)
-        self.debounceInterval = .milliseconds(Int(debounceSeconds * 1000))
+        self.debounceNanos = UInt64(max(0, debounceSeconds) * 1_000_000_000)
         var loaded: FleetRegistry = persistence.restore() ?? FleetRegistry()
         loaded.normalize()
         self.box = ReadWriteValue(loaded)
@@ -48,10 +52,10 @@ public actor RegistryMutator {
         return result
     }
 
-    /// Persist immediately, cancelling any pending debounce.
+    /// Persist immediately. A timer still asleep finds nothing pending when
+    /// it wakes, and exits on its own.
     public func flushNow() {
-        flushTask?.cancel()
-        flushTask = nil
+        flushDeadline = nil
         persistence.save(state: snapshot)
     }
 
@@ -60,12 +64,33 @@ public actor RegistryMutator {
         flushNow()
     }
 
+    /// Push the write's trailing edge out, and make sure one timer waits for it.
+    ///
+    /// PIN: NEVER CANCEL A SLEEPING FLUSH. This used to cancel the pending
+    /// task and start another on every change, each asleep in the generic
+    /// `Task.sleep(for:)`. A train request's burst of writes then aborted the
+    /// server a second later in `swift_task_dealloc` ("freed pointer was not
+    /// the last allocation") — on every request. One timer now re-arms off a
+    /// deadline and sleeps with `Task.sleep(nanoseconds:)`.
     private func scheduleFlush() {
-        flushTask?.cancel()
-        flushTask = Task { [debounceInterval] in
-            try? await Task.sleep(for: debounceInterval)
-            guard !Task.isCancelled else { return }
-            await self.flushNow()
+        flushDeadline = DispatchTime.now().uptimeNanoseconds + debounceNanos
+        guard flushTask == nil else { return }
+        flushTask = Task { await self.runFlushTimer() }
+    }
+
+    private func runFlushTimer() async {
+        while let deadline = flushDeadline {
+            let now = DispatchTime.now().uptimeNanoseconds
+            if now >= deadline { break }
+            do {
+                try await Task.sleep(nanoseconds: deadline - now)
+            } catch {
+                break  // cancelled: write what's pending rather than spin
+            }
         }
+        flushTask = nil
+        guard flushDeadline != nil else { return }  // flushNow() already wrote it
+        flushDeadline = nil
+        persistence.save(state: snapshot)
     }
 }
