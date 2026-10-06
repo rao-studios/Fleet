@@ -77,6 +77,8 @@ let package = Package(
                 .product(name: "MLXLMCommon", package: "Frigate"),
                 .product(name: "MLX", package: "Frigate"),
                 .product(name: "FrigateBridge", package: "Frigate"),
+                // RaoHome: models live in ~/.rao/models/huggingface, as every Rao app keeps them.
+                .product(name: "RaoStack", package: "Conduit"),
             ],
             swiftSettings: v5
         ),
@@ -89,6 +91,8 @@ let package = Package(
                 .product(name: "MLXOptimizers", package: "Frigate"),
                 .product(name: "MLX", package: "Frigate"),
                 .product(name: "FrigateBridge", package: "Frigate"),
+                // RaoHome: models live in ~/.rao/models/huggingface, as every Rao app keeps them.
+                .product(name: "RaoStack", package: "Conduit"),
             ],
             swiftSettings: v5
         ),

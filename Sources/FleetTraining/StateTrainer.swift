@@ -3,6 +3,7 @@ import Foundation
 import MLXLLM
 import MLXLMCommon
 import FrigateBridge
+import RaoStack
 import MLXOptimizers
 
 /// Trains a LoRA to produce the values of a fixed JSON schema.
@@ -75,7 +76,7 @@ public struct StateTrainer {
             at: stagingDirectory, withIntermediateDirectories: true)
 
         let context = try await loadModel(
-            from: HubDownloader(), using: HubTokenizerLoader(), id: config.modelId)
+            from: HubDownloader(home: RaoHome.resolved().huggingFaceHome), using: HubTokenizerLoader(), id: config.modelId)
 
         // A rough token estimate for the warning the UI shows; Frigate's batch
         // iterator warns past 2048 and truncation would silently damage examples.

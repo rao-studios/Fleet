@@ -2,6 +2,7 @@ import Foundation
 import MLXLLM
 import MLXLMCommon
 import FrigateBridge
+import RaoStack
 
 /// Thin wrapper over Frigate's model loading so callers (e.g. the client app)
 /// don't need to depend on MLX modules directly.
@@ -14,7 +15,7 @@ public enum ModelLoader {
         onProgress: @Sendable @escaping (Double, String) -> Void
     ) async throws {
         _ = try await loadModelContainer(
-            from: HubDownloader(), using: HubTokenizerLoader(), id: id
+            from: HubDownloader(home: RaoHome.resolved().huggingFaceHome), using: HubTokenizerLoader(), id: id
         ) { progress in
             onProgress(progress.fractionCompleted, progress.localizedDescription ?? "Working…")
         }
