@@ -13,7 +13,7 @@ It walks the whole loop for text:
 4. **Chat** — A/B the **base model vs the fine-tuned LoRA** on the same prompt,
    with the source dataset shown alongside so you can judge recall.
 
-It's a standalone SwiftPM executable (like Totem/Client) that depends on the
+It's a standalone SwiftPM executable (like Thread/Client) that depends on the
 Fleet package next door and calls it in-process.
 
 ## Run
@@ -43,14 +43,15 @@ swift run FleetClient
 
 ## Design
 
-Reuses Totem/Client's warm design language (cream `#FAF9F6`, ink `#2D3142`, gold
+Reuses Thread/Client's warm design language (cream `#FAF9F6`, ink `#2D3142`, gold
 `#AE9060`, light-italic-serif headings) with a distinct gold **Fleet mark**
 (connected-nodes glyph) and the orbiting-ring motion.
 
 ## Storage — `fleet-db`
 
-Datasets and adapters live under `~/Documents/fleet-db` (modeled on Totem's
-`FilePersistence`):
+Datasets and adapters live under `~/Documents/fleet-db` by default (modeled on
+Thread's `FilePersistence`); `fleet serve --data-dir <path>` or `FLEET_DATA_DIR`
+relocates the store, and the footer shows the root in use:
 
 ```
 fleet-db/

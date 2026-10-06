@@ -1,3 +1,4 @@
+import Fleet
 import SwiftUI
 
 struct ContentView: View {
@@ -14,8 +15,8 @@ struct ContentView: View {
         .environmentObject(appState)
         .preferredColorScheme(.light)  // palette is light-only; lock it so default
         .task {                         // text/controls (incl. the segmented selector) stay readable
-            await appState.refresh()
-            await appState.startTotemServer()  // auto-start: the Fleet Conduit server listens by default
+            await appState.start()             // reconcile the store, then load the library
+            await appState.startThreadServer()  // auto-start: the Fleet Conduit server listens by default
         }
     }
 
@@ -27,7 +28,7 @@ struct ContentView: View {
                     Text("Fleet")
                         .font(.fleetSerif(20, weight: .light, italic: true))
                         .foregroundStyle(Color.fleetInk)
-                    Text("fine-tune lab")
+                    Text("schema-gated loras")
                         .font(.fleetSans(9, weight: .medium))
                         .foregroundStyle(Color.fleetInk.opacity(0.4))
                 }
@@ -62,7 +63,7 @@ struct ContentView: View {
 
             Spacer()
 
-            Text("fleet-db · ~/Documents/fleet-db")
+            Text("fleet-db · \(FleetDB.root.path)")
                 .font(.fleetMono(8.5))
                 .foregroundStyle(Color.fleetInk.opacity(0.3))
                 .padding(12)
@@ -75,8 +76,9 @@ struct ContentView: View {
         switch appState.screen {
         case .models: ModelsView()
         case .datasets: DatasetsView()
-        case .fineTune: FineTuneView()
-        case .chat: ChatView()
+        case .train: TrainView()
+        case .library: LibraryView()
+        case .playground: PlaygroundView()
         }
     }
 }

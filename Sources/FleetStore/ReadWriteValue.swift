@@ -3,7 +3,7 @@ import Foundation
 /// A cross-platform, thread-safe wrapper that protects a value with a POSIX
 /// reader-writer lock (`pthread_rwlock_t`).
 ///
-/// Ported from Totem's `ReadWriteValue`: concurrent reads, exclusive writes —
+/// Ported from Thread's `ReadWriteValue`: concurrent reads, exclusive writes —
 /// the right primitive for values read far more often than written. Available on
 /// both Apple platforms and Linux via swift-corelibs-foundation.
 public final class ReadWriteValue<T>: @unchecked Sendable {

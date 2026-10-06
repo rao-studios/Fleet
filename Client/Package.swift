@@ -3,7 +3,7 @@
 // download a model, build a dataset (notes / Q&A), fine-tune, then A/B chat the
 // base vs the fine-tuned LoRA to test memory recall.
 //
-// Standalone SwiftPM executable (mirrors Totem/Client). It depends on the Fleet
+// Standalone SwiftPM executable (mirrors Thread/Client). It depends on the Fleet
 // package next door and calls it in-process (no server).
 
 import PackageDescription

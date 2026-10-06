@@ -1,6 +1,6 @@
 import SwiftUI
 
-// MARK: - Palette (ported from Totem/Client's Seer system)
+// MARK: - Palette (ported from Thread/Client's Sewn system)
 
 extension Color {
     static let fleetBG = Color(red: 250 / 255, green: 249 / 255, blue: 246 / 255)
@@ -34,7 +34,7 @@ extension Font {
 // MARK: - Fleet mark
 
 /// The Fleet brand glyph — a gold connected-nodes mark (a harness coordinating
-/// Frigates/Totems), on the warm Seer-derived design system.
+/// Frigates/Threads), on the warm Sewn-derived design system.
 struct FleetMark: View {
     var size: CGFloat = 28
     var color: Color = .fleetGold
